@@ -50,10 +50,8 @@ const ShipPlacement: React.FC<ShipPlacementProps> = () => {
         setCurrentOrientation('horizontal');
         setHoverCoord(null);
       }
-      // AIプレイヤーの場合、まだ配置が始まっていない、かつ処理中でないなら配置を開始
-      // このロジックを下の useEffect に統合する方がシンプルになる可能性あり
     }
-  }, [currentPlayer, playerBoards]); // currentPlayer と playerBoards の変更でトリガー
+  }, [currentPlayer, playerBoards]);
 
 
   // AIの自動配置ロジック
@@ -70,7 +68,6 @@ const ShipPlacement: React.FC<ShipPlacementProps> = () => {
     let allShipsPlacedSuccessfully = true;
 
     // 既存の船の配置を考慮せずに、毎回空のボードから再計算する
-    // これにより、もしバグで一部の船が残っていても影響を受けない
     let tempCells = createEmptyBoard(playerId).cells;
 
     for (const shipDef of ALL_SHIPS) {
@@ -112,7 +109,7 @@ const ShipPlacement: React.FC<ShipPlacementProps> = () => {
     }
     setIsAiPlacing(false); // 配置終了フラグを下げる
     lastProcessedPlayerId.current = null; // 処理完了
-  }, [setPlayerBoardShips, isAiPlacing, ALL_SHIPS]); // isAiPlacing を依存関係に追加
+  }, [setPlayerBoardShips, isAiPlacing, ALL_SHIPS]);
 
 
   // 船の定義
@@ -163,6 +160,20 @@ const ShipPlacement: React.FC<ShipPlacementProps> = () => {
   const handleRotateShip = useCallback(() => {
     setCurrentOrientation(prev => (prev === 'horizontal' ? 'vertical' : 'horizontal'));
   }, []);
+
+
+  const handleRedeploy = useCallback(() => {
+    if (!currentPlayer) return;
+
+    // 現在のプレイヤーの配置情報をリセット
+    setCurrentPlacedShips([]);
+    setCurrentShipIndex(0);
+    setCurrentOrientation('horizontal');
+    setHoverCoord(null);
+
+    // GameContext 内のプレイヤーボードの船情報もクリア
+    setPlayerBoardShips(currentPlayer.id, []);
+  }, [currentPlayer, setPlayerBoardShips]);
 
 
   // フェーズ進行とAIの自動配置を制御する主要な useEffect
@@ -227,7 +238,7 @@ const ShipPlacement: React.FC<ShipPlacementProps> = () => {
       isAiPlacing,
       setGameState,
       advancePhase,
-      handleRandomPlacement // useCallbackでラップされた関数は依存関係に入れる
+      handleRandomPlacement
   ]);
 
 
@@ -276,7 +287,7 @@ const ShipPlacement: React.FC<ShipPlacementProps> = () => {
 
   return (
     <div style={{ maxWidth: '600px', margin: '0 auto', textAlign: 'center' }}>
-      <h2 style={{ textAlign: 'center' }}>⚓ 戦艦ゲーム ⚓</h2>
+      {/* <h2>⚓ 戦艦ゲーム ⚓</h2> ← この行を削除 */}
       <h3 style={{ textAlign: 'center' }}>
         [{currentPlayer.name}] の船を配置してください
       </h3>
@@ -320,6 +331,13 @@ const ShipPlacement: React.FC<ShipPlacementProps> = () => {
                 disabled={currentShipIndex >= ALL_SHIPS.length}
             >
               ランダム配置
+            </button>
+            <button
+                onClick={handleRedeploy}
+                disabled={isAiPlacing}
+                style={{ marginLeft: '10px' }}
+            >
+                再配置
             </button>
           </>
         )}
