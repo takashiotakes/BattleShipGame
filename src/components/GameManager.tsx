@@ -1,47 +1,83 @@
-import React, { useEffect, useState } from 'react';
-import { PlayerType, GamePhase, Player, Ship } from '../types';
+import React, { useState, useEffect } from 'react';
+import { Player, Coordinate } from '../types';
 import GameBoard from './GameBoard';
-import GameResultModal from './GameResultModal';
-import { isAllShipsSunk } from '../utils/gameUtils';
 
 type GameManagerProps = {
   players: Player[];
+  currentPlayerId: number;
+  onGameEnd: (winnerIds: number[]) => void;
+  onUpdatePlayers: (players: Player[]) => void;
 };
 
-const GameManager: React.FC<GameManagerProps> = ({ players }) => {
-  const [phase, setPhase] = useState<GamePhase>('playing');
-  const [currentTurn, setCurrentTurn] = useState(0);
-  const [winner, setWinner] = useState<string | null>(null);
-  const [showResultModal, setShowResultModal] = useState(false);
-
-  const checkVictory = () => {
-    const alivePlayers = players.filter(p => p.type !== 'none' && p.ships && !isAllShipsSunk(p.ships));
-    if (alivePlayers.length === 1) {
-      const winnerName = alivePlayers[0].name;
-      setWinner(winnerName);
-      setPhase('ended');
-      setShowResultModal(true);
-    }
-  };
+const GameManager: React.FC<GameManagerProps> = ({
+  players,
+  currentPlayerId,
+  onGameEnd,
+  onUpdatePlayers,
+}) => {
+  const [localPlayers, setLocalPlayers] = useState<Player[]>(players);
+  const [currentTurn, setCurrentTurn] = useState(currentPlayerId);
 
   useEffect(() => {
-    if (phase === 'playing') {
-      checkVictory();
-    }
-  }, [players, phase]);
+    setLocalPlayers(players);
+    setCurrentTurn(currentPlayerId);
+  }, [players, currentPlayerId]);
 
-  const handleCloseModal = () => {
-    setShowResultModal(false);
-    // ゲーム再開またはタイトル戻りは別途実装
+  const handleAttack = (targetPlayerId: number, coord: Coordinate) => {
+    if (targetPlayerId === currentTurn) {
+      // 自分のボードは攻撃できない
+      return;
+    }
+
+    const attacker = localPlayers[currentTurn];
+    const defender = localPlayers[targetPlayerId];
+
+    // すでに攻撃済みのマスは無効
+    const cellState = defender.board[coord.row][coord.col];
+    if (cellState === 'hit' || cellState === 'miss') return;
+
+    // 攻撃判定
+    const newBoard = defender.board.map((row) => [...row]);
+    if (cellState === 'ship') {
+      newBoard[coord.row][coord.col] = 'hit';
+    } else {
+      newBoard[coord.row][coord.col] = 'miss';
+    }
+
+    const newDefender = { ...defender, board: newBoard };
+    const newPlayers = localPlayers.map((p) =>
+      p.id === targetPlayerId ? newDefender : p
+    );
+
+    setLocalPlayers(newPlayers);
+    onUpdatePlayers(newPlayers);
+
+    // TODO: 勝敗判定ロジック
+
+    // 次のターンへ（なしプレイヤーはスキップ）
+    let nextTurn = (currentTurn + 1) % newPlayers.length;
+    while (newPlayers[nextTurn].type === 'none') {
+      nextTurn = (nextTurn + 1) % newPlayers.length;
+      if (nextTurn === currentTurn) break; // 全員なしの場合回避
+    }
+    setCurrentTurn(nextTurn);
   };
 
   return (
     <div>
-      <h1>⚓ Battle Ship Game ⚓</h1>
-      <GameBoard currentPlayer={players[currentTurn]} />
-      {showResultModal && (
-        <GameResultModal winner={winner} onClose={handleCloseModal} />
-      )}
+      <h2>現在のターン: プレイヤー {currentTurn + 1}</h2>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px' }}>
+        {localPlayers
+          .filter((p) => p.type !== 'none' && p.id !== currentTurn)
+          .map((p) => (
+            <GameBoard
+              key={p.id}
+              player={p}
+              currentPlayerId={currentTurn}
+              onAttack={handleAttack}
+            />
+          ))}
+      </div>
     </div>
   );
 };
