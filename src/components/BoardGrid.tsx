@@ -1,46 +1,115 @@
-import React from 'react';
-import { Cell as CellType, Coordinate, AttackedCellStatus } from '../models/types'; // AttackedCellStatusを追加
-import Cell from './Cell';
+// src/components/BoardGrid.tsx (新規作成または既存を修正)
+
+import React, { useCallback } from 'react';
+import { Cell, Coordinate, CellStatus } from '../models/types';
 
 interface BoardGridProps {
-  cells: CellType[][];
-  isPlayerBoard: boolean; // プレイヤー自身のボードかどうか (船の表示制御に使う)
-  // attackedCells?: { [key: string]: AttackedCellStatus }; // 攻撃履歴（相手のボード表示用）
-  onCellClick?: (coord: Coordinate) => void; // セルがクリックされたときのコールバック
-  onCellHover?: (coord: Coordinate) => void; // マウスがセルにホバーしたときのコールバック
-  // disabled?: boolean; // ボード操作を無効にするフラグ
+  cells: Cell[][];
+  isPlayerBoard: boolean; // 自分のボードか相手のボードか (表示を切り替えるため)
+  onCellClick?: (coord: Coordinate) => void;
+  onCellHover?: (coord: Coordinate) => void;
+  onBoardLeave?: () => void;
+  disableClick?: boolean; // クリックを無効にするか
 }
 
-const BoardGrid: React.FC<BoardGridProps> = ({ cells, isPlayerBoard, onCellClick, onCellHover }) => {
+const BoardGrid: React.FC<BoardGridProps> = ({
+  cells,
+  isPlayerBoard,
+  onCellClick,
+  onCellHover,
+  onBoardLeave,
+  disableClick = false,
+}) => {
+  const handleCellClick = useCallback(
+    (x: number, y: number) => {
+      if (!disableClick && onCellClick) {
+        onCellClick({ x, y });
+      }
+    },
+    [onCellClick, disableClick]
+  );
+
+  const handleCellHover = useCallback(
+    (x: number, y: number) => {
+      if (onCellHover) {
+        onCellHover({ x, y });
+      }
+    },
+    [onCellHover]
+  );
+
+  const getCellColor = useCallback(
+    (status: CellStatus, x: number, y: number): string => {
+      if (isPlayerBoard) {
+        // 自分のボードの場合
+        switch (status) {
+          case 'empty':
+            return '#add8e6'; // 薄い青 (海)
+          case 'ship':
+            return '#8b4513'; // 茶色 (未被弾の船)
+          case 'hit':
+            return '#ff4500'; // 赤 (被弾した船)
+          case 'miss':
+            return '#6a5acd'; // スレートブルー (攻撃ミス)
+          case 'sunk':
+            return '#4b0082'; // インディゴ (沈没した船)
+          default:
+            return '#add8e6';
+        }
+      } else {
+        // 相手のボードの場合 (見えない船)
+        switch (status) {
+          case 'empty':
+            return '#add8e6'; // 薄い青 (海)
+          case 'hit':
+            return '#ff4500'; // 赤 (被弾したマス)
+          case 'miss':
+            return '#6a5acd'; // スレートブルー (攻撃ミス)
+          case 'sunk':
+            return '#4b0082'; // インディゴ (沈没した船)
+          case 'ship': // 相手のボードでは船は見えない
+          default:
+            return '#add8e6';
+        }
+      }
+    },
+    [isPlayerBoard]
+  );
+
   return (
     <table
       style={{
         borderCollapse: 'collapse',
-        margin: '0 auto', // 中央揃え
+        margin: '0 auto',
         textAlign: 'center',
+        cursor: disableClick ? 'not-allowed' : 'pointer',
       }}
+      onMouseLeave={onBoardLeave}
     >
       <thead>
         <tr>
           <th></th>
           {Array.from({ length: 10 }, (_, i) => (
-            <th key={i}>{String.fromCharCode(65 + i)}</th> // A, B, C...
+            <th key={i}>{String.fromCharCode(65 + i)}</th>
           ))}
         </tr>
       </thead>
       <tbody>
         {cells.map((row, rowIndex) => (
           <tr key={rowIndex}>
-            <td>{rowIndex + 1}</td> {/* 1, 2, 3... */}
+            <td>{rowIndex + 1}</td>
             {row.map((cell, colIndex) => (
-              <Cell
-                key={`${cell.x}-${cell.y}`}
-                coordinate={{ x: cell.x, y: cell.y }}
-                status={cell.status}
-                isShipVisible={isPlayerBoard} // プレイヤー自身のボードなら船を表示
-                onClick={onCellClick}
-                onMouseEnter={onCellHover}
-              />
+              <td
+                key={`${cell.x},${cell.y}`}
+                style={{
+                  width: '30px', // セルのサイズを少し大きく
+                  height: '30px',
+                  border: '1px solid #333',
+                  backgroundColor: getCellColor(cell.status, cell.x, cell.y),
+                }}
+                onClick={() => handleCellClick(cell.x, cell.y)}
+                onMouseEnter={() => handleCellHover(cell.x, cell.y)}
+              ></td>
             ))}
           </tr>
         ))}

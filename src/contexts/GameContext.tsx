@@ -1,23 +1,25 @@
 // src/contexts/GameContext.tsx
 
-import React, { createContext, useContext, useState, ReactNode, useCallback } from 'react';
-import { GamePhase, PlayerSettings, PlayerBoard, GameState, ALL_SHIPS, Coordinate, AttackResult, CellStatus, PlacedShip } from '../models/types';
-import { createEmptyBoard, updateCellsWithShips } from '../lib/boardUtils'; // updateCellsWithShips をインポート
+import React, { createContext, useContext, useState, ReactNode, useCallback, useRef, useEffect } from 'react';
+import { GamePhase, PlayerSettings, PlayerBoard, GameState, Coordinate, AttackResult, PlacedShip, ALL_SHIPS, ShipDefinition } from '../models/types'; // ALL_SHIPS, ShipDefinition をインポート
+import { createEmptyBoard, placeShipOnBoard } from '../lib/boardUtils'; // placeShipOnBoard をインポート
 
 interface GameContextType {
   gameState: GameState;
   setGameState: React.Dispatch<React.SetStateAction<GameState>>;
   updatePlayers: (newPlayers: PlayerSettings[]) => void;
   advancePhase: (newPhase: GamePhase) => void;
-  advanceTurn: () => void; // 新しく追加
-  handleAttack: (attackerId: number, targetPlayerId: number, coord: Coordinate) => AttackResult; // 新しく追加
+  advanceTurn: () => void; // ★重要: GameScreenで必要なので残す
+  handleAttack: (attackerId: number, targetPlayerId: number, coord: Coordinate) => AttackResult;
+  resetGame: () => void;
+  // ★追加★ 船の配置を更新する関数
+  setPlayerBoardShips: (playerId: number, placedShips: PlacedShip[]) => void;
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
 
 export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [gameState, setGameState] = useState<GameState>(() => {
-    // 初期プレイヤー設定
     const initialPlayers: PlayerSettings[] = [
       { id: 0, name: 'プレイヤー1 (あなた)', type: 'human' },
       { id: 1, name: 'プレイヤー2 (AI)', type: 'ai', difficulty: 'easy' },
@@ -25,13 +27,13 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       { id: 3, name: 'プレイヤー4 (なし)', type: 'none' },
     ];
 
-    // 各プレイヤーのボードを初期化
     const initialPlayerBoards: { [playerId: number]: PlayerBoard } = {};
     initialPlayers.forEach(player => {
       if (player.type !== 'none') {
         initialPlayerBoards[player.id] = {
-          ...createEmptyBoard(player.id), // boardUtilsから取得
-          attackedCells: {}, // 攻撃結果を記録するマップを初期化
+          ...createEmptyBoard(player.id),
+          attackedCells: {},
+          placedShips: [], // ここで初期化
         };
       }
     });
@@ -40,19 +42,26 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       players: initialPlayers,
       playerBoards: initialPlayerBoards,
       phase: 'select-players',
-      currentPlayerTurnId: -1, // 初期ターンプレイヤーは未設定
+      currentPlayerTurnId: -1,
+      winnerId: null,
     };
   });
+
+  const gameStateRef = useRef(gameState);
+  useEffect(() => {
+    gameStateRef.current = gameState;
+  }, [gameState]);
+
 
   const updatePlayers = useCallback((newPlayers: PlayerSettings[]) => {
     setGameState(prev => {
       const newPlayerBoards: { [playerId: number]: PlayerBoard } = {};
       newPlayers.forEach(player => {
         if (player.type !== 'none') {
-          // 既存のボードがあれば引き継ぎ、なければ新しく作成
           newPlayerBoards[player.id] = prev.playerBoards[player.id] || {
             ...createEmptyBoard(player.id),
             attackedCells: {},
+            placedShips: [],
           };
         }
       });
@@ -65,32 +74,48 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       let updatedState = { ...prev, phase: newPhase };
 
       if (newPhase === 'in-game') {
-        // ゲーム開始時、最初の人間プレイヤーをターンプレイヤーに設定
-        const firstHumanPlayer = prev.players.find(p => p.type === 'human');
-        if (firstHumanPlayer) {
-          updatedState.currentPlayerTurnId = firstHumanPlayer.id;
+        // ゲーム開始時、アクティブプレイヤーから最初のプレイヤーを設定
+        const firstActivePlayer = prev.players.find(p => p.type !== 'none');
+        if (firstActivePlayer) {
+          updatedState.currentPlayerTurnId = firstActivePlayer.id;
         } else {
-          // 人間プレイヤーがいない場合は最初のAIプレイヤーにする
-          const firstAIPlayer = prev.players.find(p => p.type === 'ai');
-          if (firstAIPlayer) {
-            updatedState.currentPlayerTurnId = firstAIPlayer.id;
-          } else {
-            // エラーハンドリング: ゲームを開始できるプレイヤーがいない
-            console.error("No active players to start game.");
-            updatedState.currentPlayerTurnId = -1; // 無効なID
-          }
+          console.error("No active players to start game.");
+          updatedState.currentPlayerTurnId = -1;
         }
+      } else if (newPhase === 'ship-placement') {
+        // 船配置フェーズに入るときは、最初の有効プレイヤーのボードを準備
+        const firstPlayerToPlace = prev.players.find(p => p.type !== 'none');
+        if (firstPlayerToPlace) {
+            updatedState.currentPlayerTurnId = firstPlayerToPlace.id;
+        } else {
+            updatedState.currentPlayerTurnId = -1;
+        }
+      } else { // select-players や game-over の場合
+          updatedState.currentPlayerTurnId = -1;
       }
       return updatedState;
     });
   }, []);
 
-  // ターンを進めるロジック
   const advanceTurn = useCallback(() => {
     setGameState(prev => {
+      if (prev.phase === 'game-over') {
+        return prev;
+      }
+
       const activePlayers = prev.players.filter(p => p.type !== 'none');
+      if (activePlayers.length === 0) {
+          console.warn("No active players to advance turn.");
+          return prev;
+      }
+
       const currentIndex = activePlayers.findIndex(p => p.id === prev.currentPlayerTurnId);
-      const nextIndex = (currentIndex + 1) % activePlayers.length;
+      let nextIndex;
+      if (currentIndex === -1) {
+          nextIndex = 0;
+      } else {
+          nextIndex = (currentIndex + 1) % activePlayers.length;
+      }
       const nextPlayerId = activePlayers[nextIndex].id;
 
       return {
@@ -100,83 +125,125 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     });
   }, []);
 
-  // 攻撃処理ロジック
   const handleAttack = useCallback((attackerId: number, targetPlayerId: number, coord: Coordinate): AttackResult => {
-    let attackResult: AttackResult = { hit: false };
+    let currentAttackResult: AttackResult = { hit: false };
 
     setGameState(prev => {
       const updatedPlayerBoards = { ...prev.playerBoards };
-      const targetBoard = { ...updatedPlayerBoards[targetPlayerId] };
-      const attackingPlayerBoard = { ...updatedPlayerBoards[attackerId] };
+      const targetBoard = JSON.parse(JSON.stringify(updatedPlayerBoards[targetPlayerId]));
+      const attackingPlayerBoard = JSON.parse(JSON.stringify(updatedPlayerBoards[attackerId]));
 
-      // ターゲットセルの確認
-      const targetCell = targetBoard.cells[coord.y][coord.x];
-      const newTargetCells = targetBoard.cells.map(row => row.map(cell => ({ ...cell })));
-
-      // 既に攻撃済みのセルかどうかをチェック
       if (attackingPlayerBoard.attackedCells[`${coord.x},${coord.y}`]) {
-          // 既に攻撃済みの場合は何もしない（UI側でクリック不可にするべきだが、念のため）
           console.warn('Already attacked this cell:', coord);
-          attackResult = { hit: false }; // 攻撃結果はミスとする
-          return prev; // ステートを変更しない
+          currentAttackResult = { hit: false, alreadyAttacked: true };
+          return prev;
       }
 
-      if (targetCell.status === 'ship') {
-        // ヒット！
-        attackResult.hit = true;
+      const targetCellOnOpponentBoard = targetBoard.cells[coord.y][coord.x];
 
-        // ターゲットボードのセル状態を 'hit' に更新
-        newTargetCells[coord.y][coord.x].status = 'hit';
+      if (targetCellOnOpponentBoard.status === 'ship') {
+        currentAttackResult.hit = true;
 
-        // ターゲットボードの船のヒット情報を更新
-        const hitShip = targetBoard.placedShips.find(s => s.id === targetCell.shipId);
+        const hitShip = targetBoard.placedShips.find((s: PlacedShip) => s.id === targetCellOnOpponentBoard.shipId);
         if (hitShip) {
-          const updatedHits = [...hitShip.hits, coord];
-          const updatedPlacedShips = targetBoard.placedShips.map(s => {
-            if (s.id === hitShip.id) {
-              const isSunk = updatedHits.length === s.definition.size;
-              if (isSunk) {
-                attackResult.sunkShipId = s.id; // 沈んだ船のIDを結果に含める
-                // 沈んだ船のセルを 'sunk' 状態に更新
-                for (let i = 0; i < s.definition.size; i++) {
-                  let x = s.start.x;
-                  let y = s.start.y;
-                  if (s.orientation === 'horizontal') x += i;
-                  else y += i;
-                  if (newTargetCells[y] && newTargetCells[y][x]) {
-                    newTargetCells[y][x].status = 'sunk';
-                  }
+          if (!hitShip.hits.some((h: Coordinate) => h.x === coord.x && h.y === coord.y)) {
+            hitShip.hits.push(coord);
+          }
+          const isSunk = hitShip.hits.length === hitShip.definition.size;
+          hitShip.isSunk = isSunk;
+
+          if (isSunk) {
+            currentAttackResult.sunkShipId = hitShip.id;
+            for (let i = 0; i < hitShip.definition.size; i++) {
+                let x = hitShip.start.x;
+                let y = hitShip.start.y;
+                if (hitShip.orientation === 'horizontal') x += i;
+                else y += i;
+                if (targetBoard.cells[y] && targetBoard.cells[y][x]) {
+                    targetBoard.cells[y][x].status = 'sunk';
                 }
-              }
-              return { ...s, hits: updatedHits, isSunk: isSunk };
             }
-            return s;
-          });
-          targetBoard.placedShips = updatedPlacedShips;
+          }
         }
-
-        // 攻撃者の attackedCells を更新
         attackingPlayerBoard.attackedCells[`${coord.x},${coord.y}`] = 'hit';
-
+        targetBoard.cells[coord.y][coord.x].status = 'hit';
       } else {
-        // ミス！
-        attackResult.hit = false;
-        // ターゲットボードのセル状態を 'miss' に更新
-        newTargetCells[coord.y][coord.x].status = 'miss';
-        // 攻撃者の attackedCells を更新
+        currentAttackResult.hit = false;
         attackingPlayerBoard.attackedCells[`${coord.x},${coord.y}`] = 'miss';
+        targetBoard.cells[coord.y][coord.x].status = 'miss';
       }
 
-      updatedPlayerBoards[targetPlayerId] = { ...targetBoard, cells: newTargetCells }; // ターゲットボードのセル更新を反映
-      updatedPlayerBoards[attackerId] = attackingPlayerBoard; // 攻撃者のボードを更新
+      updatedPlayerBoards[targetPlayerId] = targetBoard;
+      updatedPlayerBoards[attackerId] = attackingPlayerBoard;
+
+      const allOpponentShipsSunk = targetBoard.placedShips.every((ship: PlacedShip) => ship.isSunk);
+      let newWinnerId: number | null = prev.winnerId;
+      let newPhase: GamePhase = prev.phase;
+
+      if (allOpponentShipsSunk) {
+        newWinnerId = attackerId;
+        newPhase = 'game-over';
+      }
 
       return {
         ...prev,
         playerBoards: updatedPlayerBoards,
+        phase: newPhase,
+        winnerId: newWinnerId,
       };
     });
 
-    return attackResult; // 攻撃結果を返す
+    return currentAttackResult;
+  }, []);
+
+  // ★修正なし★ 船の配置情報を更新する関数 (前回と同一)
+  const setPlayerBoardShips = useCallback((playerId: number, placedShips: PlacedShip[]) => {
+    setGameState(prev => {
+      const updatedPlayerBoards = { ...prev.playerBoards };
+      if (updatedPlayerBoards[playerId]) {
+        // 新しい cells を生成し、そこに配置された船を反映させる
+        const newCells = placedShips.reduce((currentCells, ship) => {
+            // placeShipOnBoard は新しい配列を返すので、イミュータブルに処理できる
+            return placeShipOnBoard(currentCells, ship.definition, ship.start, ship.orientation);
+          }, createEmptyBoard(playerId).cells); // 空のボードから開始して船を配置
+
+        updatedPlayerBoards[playerId] = {
+          ...updatedPlayerBoards[playerId],
+          placedShips: placedShips,
+          cells: newCells, // 更新された cells を設定
+        };
+      }
+      return { ...prev, playerBoards: updatedPlayerBoards };
+    });
+  }, []);
+
+
+  const resetGame = useCallback(() => {
+    const initialPlayers: PlayerSettings[] = [
+      { id: 0, name: 'プレイヤー1 (あなた)', type: 'human' },
+      { id: 1, name: 'プレイヤー2 (AI)', type: 'ai', difficulty: 'easy' },
+      { id: 2, name: 'プレイヤー3 (なし)', type: 'none' },
+      { id: 3, name: 'プレイヤー4 (なし)', type: 'none' },
+    ];
+
+    const initialPlayerBoards: { [playerId: number]: PlayerBoard } = {};
+    initialPlayers.forEach(player => {
+      if (player.type !== 'none') {
+        initialPlayerBoards[player.id] = {
+          ...createEmptyBoard(player.id),
+          attackedCells: {},
+          placedShips: [],
+        };
+      }
+    });
+
+    setGameState({
+      players: initialPlayers,
+      playerBoards: initialPlayerBoards,
+      phase: 'select-players',
+      currentPlayerTurnId: -1,
+      winnerId: null,
+    });
   }, []);
 
   return (
@@ -186,8 +253,10 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         setGameState,
         updatePlayers,
         advancePhase,
-        advanceTurn,
+        advanceTurn, // GameScreen からは advanceTurn を呼び出せるように提供する
         handleAttack,
+        resetGame,
+        setPlayerBoardShips,
       }}
     >
       {children}

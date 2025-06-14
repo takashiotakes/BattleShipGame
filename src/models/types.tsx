@@ -20,64 +20,70 @@ export interface PlayerSettings {
 export type Orientation = 'horizontal' | 'vertical';
 
 export interface ShipDefinition {
-  id: string; // 追加: 船のユニークID
+  id: string; // 船のID (例: 'carrier-0', 'battleship-0')
   name: string;
   size: number;
 }
 
-// 共通の船の定義
-export const ALL_SHIPS: ShipDefinition[] = [
-  { id: 'carrier', name: '空母', size: 5 },
-  { id: 'battleship', name: '戦艦', size: 4 },
-  { id: 'cruiser', name: '巡洋艦', size: 3 },
-  { id: 'submarine', name: '潜水艦', size: 3 },
-  { id: 'destroyer', name: '駆逐艦', size: 2 },
-];
-
-
-export interface Coordinate {
-  x: number; // 0〜9
-  y: number; // 0〜9
+// 船の配置情報（まだボードに置かれていない、プレイヤーが選択中の船など）
+export interface TemporaryShipPlacement {
+  ship: ShipDefinition;
+  start: Coordinate | null; // 配置候補位置
+  orientation: Orientation;
+  placed: boolean; // 配置済みか
 }
 
-export type CellStatus = 'empty' | 'ship' | 'hit' | 'miss' | 'sunk';
-export type AttackedCellStatus = 'hit' | 'miss' | 'empty'; // 相手のボードに表示される状態
-
-export interface Cell {
-  x: number;
-  y: number;
-  status: CellStatus;
-  shipId?: string; // どの船か（sunk 判定などに使う）
-}
-
+// ボードに配置された船の情報
 export interface PlacedShip {
-  id: string; // ShipDefinitionのidと紐付ける
+  id: string; // ShipDefinition の id と同じ
   definition: ShipDefinition;
   start: Coordinate;
   orientation: Orientation;
   hits: Coordinate[]; // ヒットした座標のリスト
-  isSunk: boolean;
+  isSunk: boolean; // 沈没したか
+}
+
+export type CellStatus = 'empty' | 'ship' | 'hit' | 'miss' | 'sunk';
+
+export interface Cell {
+  x: number; // 0〜9
+  y: number; // 0〜9
+  status: CellStatus;
+  shipId?: string; // どの船か（sunk 判定などに使う）
 }
 
 export interface PlayerBoard {
   playerId: number;
-  cells: Cell[][]; // 自身のボードのセル状態 (船の位置が分かる)
-  placedShips: PlacedShip[]; // 配置済みの船の具体的な情報
-  // 相手のボードへの攻撃結果を記録する盤面
-  // 攻撃履歴として記録し、UI表示用に変換する方が良いかもしれないが、今回はシンプルに盤面として持つ
-  // ただし、このフィールドは自身の攻撃結果のみを記録する
-  attackedCells: { [key: string]: AttackedCellStatus }; // 例: "0,0": "hit", "1,2": "miss"
+  cells: Cell[][];
+  placedShips: PlacedShip[]; // 配置済みの船のリスト
+  attackedCells: { [key: string]: 'hit' | 'miss' }; // 攻撃した座標と結果
 }
 
 export interface GameState {
   players: PlayerSettings[];
   playerBoards: { [playerId: number]: PlayerBoard };
   phase: GamePhase;
-  currentPlayerTurnId: number; // 現在のターンプレイヤーのID
-  // attackHistory: AttackHistoryEntry[]; // 攻撃履歴 (今後追加)
+  currentPlayerTurnId: number; // 現在のターンプレイヤーID
+  winnerId: number | null; // 勝者プレイヤーID
 }
 
+export interface Coordinate {
+  x: number; // 0〜9
+  y: number; // 0〜9
+}
+
+// AttackResult を修正
 export interface AttackResult {
   hit: boolean;
   sunkShipId?: string; // 沈んだ船のID
+  alreadyAttacked?: boolean; // 既に攻撃済みだったか
 }
+
+// ゲームで使用する船の定義リスト
+export const ALL_SHIPS: ShipDefinition[] = [
+  { id: 'carrier-0', name: '空母', size: 5 },
+  { id: 'battleship-0', name: '戦艦', size: 4 },
+  { id: 'cruiser-0', name: '巡洋艦', size: 3 },
+  { id: 'submarine-0', name: '潜水艦', size: 3 },
+  { id: 'destroyer-0', name: '駆逐艦', size: 2 },
+];
