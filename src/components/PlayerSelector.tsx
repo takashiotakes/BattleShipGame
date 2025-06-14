@@ -1,10 +1,5 @@
 import React from 'react';
-import { PlayerType, AIDifficulty } from '../App';
-
-interface PlayerSettings {
-  type: PlayerType;
-  aiLevel?: AIDifficulty;
-}
+import { PlayerType, AIDifficulty, PlayerSettings } from '../models/types';
 
 interface PlayerSelectorProps {
   players: PlayerSettings[];
@@ -22,10 +17,22 @@ const PlayerSelector: React.FC<PlayerSelectorProps> = ({
     updatedPlayers[index].type = type;
 
     // AIレベルが必要な場合は初期化、不要な場合は削除
-    if (type === 'ai' && !updatedPlayers[index].aiLevel) {
-      updatedPlayers[index].aiLevel = 'Easy';
+    if (type === 'ai' && !updatedPlayers[index].difficulty) {
+      updatedPlayers[index].difficulty = 'easy';
     } else if (type !== 'ai') {
-      delete updatedPlayers[index].aiLevel;
+      delete updatedPlayers[index].difficulty;
+    }
+    // "なし"が選択された場合、後続のプレイヤーを"なし"にする
+    if (type === 'none') {
+        for (let i = index + 1; i < updatedPlayers.length; i++) {
+            updatedPlayers[i].type = 'none';
+            delete updatedPlayers[i].difficulty;
+        }
+    }
+    // "なし"以外が選択された場合、後続のプレイヤーはそのまま維持
+    // ただし、AI->人間など、AIから人間に変わった場合はAI難易度を削除する
+    if (type !== 'ai' && updatedPlayers[index].difficulty) {
+      delete updatedPlayers[index].difficulty;
     }
 
     onPlayersChange(updatedPlayers);
@@ -34,17 +41,18 @@ const PlayerSelector: React.FC<PlayerSelectorProps> = ({
   const handleAILevelChange = (index: number, level: AIDifficulty) => {
     const updatedPlayers = [...players];
     if (updatedPlayers[index].type === 'ai') {
-      updatedPlayers[index].aiLevel = level;
+      updatedPlayers[index].difficulty = level;
       onPlayersChange(updatedPlayers);
     }
   };
 
-  const activeAIs = players.filter(p => p.type === 'ai');
+  // AIプレイヤーが1人でもいるかを確認
+  const hasAIPlayer = players.some(p => p.type === 'ai');
 
   return (
     <div style={{ maxWidth: '400px', margin: '0 auto' }}>
       {players.map((player, index) => (
-        <div key={index} style={{ marginBottom: '10px' }}>
+        <div key={player.id} style={{ marginBottom: '10px' }}>
           <label>
             プレイヤー{index + 1}:
             <select
@@ -62,23 +70,27 @@ const PlayerSelector: React.FC<PlayerSelectorProps> = ({
         </div>
       ))}
 
-      {activeAIs.length > 0 && (
+      {/* AIプレイヤーが存在する場合のみ難易度設定を表示 */}
+      {hasAIPlayer && (
         <div style={{ margin: '20px 0' }}>
           <label>
             AI難易度設定:
+            {/* 複数のAIプレイヤーがいる場合でも、ここでは代表して最初のAIの難易度を表示・変更する。
+                あるいは、AIごとに難易度設定を表示するUIに変更することも検討できる。
+                今回はシンプルに、最初のAIの難易度を設定対象とする。*/}
             <select
-              value={activeAIs[0].aiLevel}
+              value={players.find(p => p.type === 'ai')?.difficulty || 'easy'}
               onChange={(e) =>
                 handleAILevelChange(
-                  players.findIndex(p => p.type === 'ai'),
+                  players.findIndex(p => p.type === 'ai'), // 最初のAIプレイヤーのインデックス
                   e.target.value as AIDifficulty
                 )
               }
               style={{ marginLeft: '10px' }}
             >
-              <option value="Easy">Easy</option>
-              <option value="Normal">Normal</option>
-              <option value="Hard">Hard</option>
+              <option value="easy">Easy</option>
+              <option value="normal">Normal</option>
+              <option value="hard">Hard</option>
             </select>
           </label>
         </div>
@@ -92,4 +104,3 @@ const PlayerSelector: React.FC<PlayerSelectorProps> = ({
 };
 
 export default PlayerSelector;
-

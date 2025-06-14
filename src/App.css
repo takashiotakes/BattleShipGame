@@ -1,4 +1,5 @@
 /* App.css */
+/* 既存のApp.cssファイルに大きな変更はないが、もし存在する場合はそのままの内容で維持 */
 .app-container {
   text-align: center;
   padding: 2rem;
@@ -9,3 +10,5 @@
   font-size: 2rem;
   margin-bottom: 2rem;
 }
+
+/* 他に必要なスタイルがあれば追加 */
