@@ -1,18 +1,17 @@
 // src/contexts/GameContext.tsx
 
 import React, { createContext, useContext, useState, ReactNode, useCallback, useRef, useEffect } from 'react';
-import { GamePhase, PlayerSettings, PlayerBoard, GameState, Coordinate, AttackResult, PlacedShip, ALL_SHIPS, ShipDefinition } from '../models/types'; // ALL_SHIPS, ShipDefinition をインポート
-import { createEmptyBoard, placeShipOnBoard } from '../lib/boardUtils'; // placeShipOnBoard をインポート
+import { GamePhase, PlayerSettings, PlayerBoard, GameState, Coordinate, AttackResult, PlacedShip, ALL_SHIPS, ShipDefinition } from '../models/types';
+import { createEmptyBoard, placeShipOnBoard } from '../lib/boardUtils';
 
 interface GameContextType {
   gameState: GameState;
   setGameState: React.Dispatch<React.SetStateAction<GameState>>;
   updatePlayers: (newPlayers: PlayerSettings[]) => void;
   advancePhase: (newPhase: GamePhase) => void;
-  advanceTurn: () => void; // ★重要: GameScreenで必要なので残す
+  advanceTurn: () => void;
   handleAttack: (attackerId: number, targetPlayerId: number, coord: Coordinate) => AttackResult;
   resetGame: () => void;
-  // ★追加★ 船の配置を更新する関数
   setPlayerBoardShips: (playerId: number, placedShips: PlacedShip[]) => void;
 }
 
@@ -20,8 +19,9 @@ const GameContext = createContext<GameContextType | undefined>(undefined);
 
 export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [gameState, setGameState] = useState<GameState>(() => {
+    // 初期プレイヤー設定に、デフォルトのnameを付与
     const initialPlayers: PlayerSettings[] = [
-      { id: 0, name: 'プレイヤー1 (あなた)', type: 'human' },
+      { id: 0, name: 'プレイヤー1 (人間)', type: 'human' }, // 初期値を'人間'にする
       { id: 1, name: 'プレイヤー2 (AI)', type: 'ai', difficulty: 'easy' },
       { id: 2, name: 'プレイヤー3 (なし)', type: 'none' },
       { id: 3, name: 'プレイヤー4 (なし)', type: 'none' },
@@ -33,7 +33,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         initialPlayerBoards[player.id] = {
           ...createEmptyBoard(player.id),
           attackedCells: {},
-          placedShips: [], // ここで初期化
+          placedShips: [],
         };
       }
     });
@@ -56,7 +56,20 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const updatePlayers = useCallback((newPlayers: PlayerSettings[]) => {
     setGameState(prev => {
       const newPlayerBoards: { [playerId: number]: PlayerBoard } = {};
-      newPlayers.forEach(player => {
+      const updatedPlayersWithNames = newPlayers.map(player => {
+        let playerName = `プレイヤー${player.id + 1}`;
+        if (player.type === 'human') {
+          playerName += ' (人間)';
+        } else if (player.type === 'ai') {
+          playerName += ' (AI)';
+        } else {
+          playerName += ' (なし)';
+        }
+        return { ...player, name: playerName }; // name を更新
+      });
+
+
+      updatedPlayersWithNames.forEach(player => { // updatedPlayersWithNames を使用
         if (player.type !== 'none') {
           newPlayerBoards[player.id] = prev.playerBoards[player.id] || {
             ...createEmptyBoard(player.id),
@@ -65,7 +78,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           };
         }
       });
-      return { ...prev, players: newPlayers, playerBoards: newPlayerBoards };
+      return { ...prev, players: updatedPlayersWithNames, playerBoards: newPlayerBoards }; // updatedPlayersWithNames を設定
     });
   }, []);
 
@@ -74,7 +87,6 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       let updatedState = { ...prev, phase: newPhase };
 
       if (newPhase === 'in-game') {
-        // ゲーム開始時、アクティブプレイヤーから最初のプレイヤーを設定
         const firstActivePlayer = prev.players.find(p => p.type !== 'none');
         if (firstActivePlayer) {
           updatedState.currentPlayerTurnId = firstActivePlayer.id;
@@ -83,14 +95,13 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           updatedState.currentPlayerTurnId = -1;
         }
       } else if (newPhase === 'ship-placement') {
-        // 船配置フェーズに入るときは、最初の有効プレイヤーのボードを準備
         const firstPlayerToPlace = prev.players.find(p => p.type !== 'none');
         if (firstPlayerToPlace) {
             updatedState.currentPlayerTurnId = firstPlayerToPlace.id;
         } else {
             updatedState.currentPlayerTurnId = -1;
         }
-      } else { // select-players や game-over の場合
+      } else {
           updatedState.currentPlayerTurnId = -1;
       }
       return updatedState;
@@ -196,21 +207,18 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return currentAttackResult;
   }, []);
 
-  // ★修正なし★ 船の配置情報を更新する関数 (前回と同一)
   const setPlayerBoardShips = useCallback((playerId: number, placedShips: PlacedShip[]) => {
     setGameState(prev => {
       const updatedPlayerBoards = { ...prev.playerBoards };
       if (updatedPlayerBoards[playerId]) {
-        // 新しい cells を生成し、そこに配置された船を反映させる
         const newCells = placedShips.reduce((currentCells, ship) => {
-            // placeShipOnBoard は新しい配列を返すので、イミュータブルに処理できる
             return placeShipOnBoard(currentCells, ship.definition, ship.start, ship.orientation);
-          }, createEmptyBoard(playerId).cells); // 空のボードから開始して船を配置
+          }, createEmptyBoard(playerId).cells);
 
         updatedPlayerBoards[playerId] = {
           ...updatedPlayerBoards[playerId],
           placedShips: placedShips,
-          cells: newCells, // 更新された cells を設定
+          cells: newCells,
         };
       }
       return { ...prev, playerBoards: updatedPlayerBoards };
@@ -219,8 +227,9 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
 
   const resetGame = useCallback(() => {
+    // resetGame でも name のロジックを適用
     const initialPlayers: PlayerSettings[] = [
-      { id: 0, name: 'プレイヤー1 (あなた)', type: 'human' },
+      { id: 0, name: 'プレイヤー1 (人間)', type: 'human' },
       { id: 1, name: 'プレイヤー2 (AI)', type: 'ai', difficulty: 'easy' },
       { id: 2, name: 'プレイヤー3 (なし)', type: 'none' },
       { id: 3, name: 'プレイヤー4 (なし)', type: 'none' },
@@ -253,7 +262,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         setGameState,
         updatePlayers,
         advancePhase,
-        advanceTurn, // GameScreen からは advanceTurn を呼び出せるように提供する
+        advanceTurn,
         handleAttack,
         resetGame,
         setPlayerBoardShips,

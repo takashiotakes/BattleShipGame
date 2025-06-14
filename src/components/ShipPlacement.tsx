@@ -1,15 +1,15 @@
 // src/components/ShipPlacement.tsx
 
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useGame } from '../contexts/GameContext';
-import BoardGrid from './BoardGrid'; // BoardGrid が同じ階層か確認
+import BoardGrid from './BoardGrid';
 import {
   PlayerSettings,
   ShipDefinition,
   PlacedShip,
   Coordinate,
   Orientation,
-  ALL_SHIPS, // 全ての船の定義をインポート
+  ALL_SHIPS,
 } from '../models/types';
 import {
   createEmptyBoard,
@@ -17,51 +17,110 @@ import {
   isShipPlacementValid,
   placeShipOnBoard,
   generateRandomShipPlacement,
-} from '../lib/boardUtils'; // 必要なユーティリティをインポート
+} from '../lib/boardUtils';
 
-interface ShipPlacementProps {
-  // players: PlayerSettings[]; // GameContext から取得するため不要
-  // currentPlayerIndex: number; // GameContext から取得するため不要
-}
+interface ShipPlacementProps {}
 
 const ShipPlacement: React.FC<ShipPlacementProps> = () => {
-  const { gameState, advancePhase, setPlayerBoardShips, setGameState } = useGame(); // setGameState も使用
+  const { gameState, advancePhase, setPlayerBoardShips, setGameState } = useGame();
   const { players, playerBoards, currentPlayerTurnId, phase } = gameState;
 
-  // 現在船を配置しているプレイヤー
+  // currentPlayer は useMemo を使うことで依存関係が変更されない限り再計算されない
   const currentPlayer = useMemo(() => players.find(p => p.id === currentPlayerTurnId), [players, currentPlayerTurnId]);
 
-  // 配置中の船のインデックス（ALL_SHIPS配列の）
   const [currentShipIndex, setCurrentShipIndex] = useState<number>(0);
-  // 現在のプレイヤーが配置した船のリスト (UI表示用の一時的なstate)
   const [currentPlacedShips, setCurrentPlacedShips] = useState<PlacedShip[]>([]);
-  // 現在プレビュー中の船の向き
   const [currentOrientation, setCurrentOrientation] = useState<Orientation>('horizontal');
-  // 現在プレビュー中の船の開始座標 (ホバー時)
   const [hoverCoord, setHoverCoord] = useState<Coordinate | null>(null);
+  const [isAiPlacing, setIsAiPlacing] = useState<boolean>(false); // AIが配置中かどうかのフラグ
 
-  // 初回ロード時または currentPlayer が変わった時に状態をリセット
+  // AI配置後の自動遷移を制御するための ref
+  const lastProcessedPlayerId = useRef<number | null>(null);
+
+
+  // currentPlayerTurnId が変更されたとき、またはAI配置が完了したときに状態をリセット
+  // この useEffect は、プレイヤーの切り替え時に ShipPlacement の内部状態を初期化するために重要
   useEffect(() => {
-    // currentPlayerId が有効かつ、まだこのプレイヤーの船が配置されていない場合のみリセット
-    if (currentPlayer && playerBoards[currentPlayer.id]?.placedShips.length === 0) {
-      setCurrentShipIndex(0);
-      setCurrentPlacedShips([]);
-      setCurrentOrientation('horizontal');
-      setHoverCoord(null);
+    if (currentPlayer) {
+      const currentPlayersBoardInContext = playerBoards[currentPlayer.id];
+      // 現在のプレイヤーが既に船を配置済みでない場合にのみリセット
+      if (currentPlayersBoardInContext?.placedShips.length === 0) {
+        setCurrentShipIndex(0);
+        setCurrentPlacedShips([]);
+        setCurrentOrientation('horizontal');
+        setHoverCoord(null);
+      }
+      // AIプレイヤーの場合、まだ配置が始まっていない、かつ処理中でないなら配置を開始
+      // このロジックを下の useEffect に統合する方がシンプルになる可能性あり
+    }
+  }, [currentPlayer, playerBoards]); // currentPlayer と playerBoards の変更でトリガー
 
-      // AIプレイヤーの場合、自動配置を実行
-      if (currentPlayer.type === 'ai') {
-        handleRandomPlacement(currentPlayer.id);
+
+  // AIの自動配置ロジック
+  const handleRandomPlacement = useCallback(async (playerId: number) => {
+    if (isAiPlacing || lastProcessedPlayerId.current === playerId) {
+        // 既に配置中か、このAIプレイヤーの配置が直前に処理された場合はスキップ
+        return;
+    }
+
+    setIsAiPlacing(true); // 配置開始フラグを立てる
+    lastProcessedPlayerId.current = playerId; // 処理中のAIを記録
+
+    const newPlacedShips: PlacedShip[] = [];
+    let allShipsPlacedSuccessfully = true;
+
+    // 既存の船の配置を考慮せずに、毎回空のボードから再計算する
+    // これにより、もしバグで一部の船が残っていても影響を受けない
+    let tempCells = createEmptyBoard(playerId).cells;
+
+    for (const shipDef of ALL_SHIPS) {
+      let attempts = 0;
+      const maxAttempts = 200; // 試行回数を増やす
+      let placedShip: PlacedShip | null = null;
+
+      while (attempts < maxAttempts) {
+        placedShip = generateRandomShipPlacement(playerId, shipDef, newPlacedShips); // 既存の newPlacedShips を渡す
+        if (placedShip) {
+          newPlacedShips.push(placedShip);
+          // 実際に船を配置した結果の cells を更新
+          tempCells = placeShipOnBoard(tempCells, placedShip.definition, placedShip.start, placedShip.orientation);
+          break; // 配置成功したら次の船へ
+        }
+        attempts++;
+      }
+
+      if (!placedShip) {
+        console.error(`Failed to place ship ${shipDef.name} after many attempts. Player: ${playerId}`);
+        allShipsPlacedSuccessfully = false;
+        break;
       }
     }
-  }, [currentPlayer, playerBoards]); // currentPlayer, playerBoards に依存
 
-  // 現在配置すべき船の定義
+    if (allShipsPlacedSuccessfully) {
+      await new Promise(resolve => setTimeout(resolve, 800)); // AIが配置している間の視覚的な遅延を少し長くする
+      setPlayerBoardShips(playerId, newPlacedShips); // Context に船を保存
+
+      // ここでsetCurrentPlacedShipsとsetCurrentShipIndexを更新することで、
+      // UIがAIの配置完了状態を認識できるようになる
+      setCurrentPlacedShips(newPlacedShips);
+      setCurrentShipIndex(ALL_SHIPS.length);
+    } else {
+        console.error("Random placement failed for some ships.");
+        // エラー時は状態をリセットし、UIを更新しない（無限ループ防止）
+        setCurrentShipIndex(0);
+        setCurrentPlacedShips([]);
+    }
+    setIsAiPlacing(false); // 配置終了フラグを下げる
+    lastProcessedPlayerId.current = null; // 処理完了
+  }, [setPlayerBoardShips, isAiPlacing, ALL_SHIPS]); // isAiPlacing を依存関係に追加
+
+
+  // 船の定義
   const shipToPlace = useMemo(() => {
     return ALL_SHIPS[currentShipIndex] || null;
   }, [currentShipIndex]);
 
-  // 現在のボードの状態（配置済みの船も含む）
+  // 現在のボードの状態（プレビュー含む）
   const currentBoardCells = useMemo(() => {
     const empty = createEmptyBoard(currentPlayer?.id || 0).cells;
     return currentPlacedShips.reduce((cells, pShip) => {
@@ -69,17 +128,16 @@ const ShipPlacement: React.FC<ShipPlacementProps> = () => {
     }, empty);
   }, [currentPlayer, currentPlacedShips]);
 
-  // ボードのクリックハンドラ（船の配置）
+  // 手動配置時のボードクリックハンドラ
   const handleBoardClick = useCallback((coord: Coordinate) => {
-    if (!shipToPlace || !currentPlayer || currentPlayer.type === 'ai') return; // 配置すべき船がないか、AIプレイヤーなら何もしない
+    if (!shipToPlace || !currentPlayer || currentPlayer.type === 'ai' || isAiPlacing) return;
 
-    // 配置が有効かチェック
     const isValid = isShipWithinBounds(coord, shipToPlace.size, currentOrientation) &&
                     isShipPlacementValid(currentBoardCells, coord, shipToPlace.size, currentOrientation);
 
     if (isValid) {
       const newPlacedShip: PlacedShip = {
-        id: shipToPlace.id, // ShipDefinitionのidを使う
+        id: shipToPlace.id, // ShipDefinition の ID を使用
         definition: shipToPlace,
         start: coord,
         orientation: currentOrientation,
@@ -87,115 +145,121 @@ const ShipPlacement: React.FC<ShipPlacementProps> = () => {
         isSunk: false,
       };
       setCurrentPlacedShips(prev => [...prev, newPlacedShip]);
-      setCurrentShipIndex(prev => prev + 1); // 次の船へ
+      setCurrentShipIndex(prev => prev + 1);
     } else {
       console.warn("Invalid placement: Ship out of bounds or overlaps with another ship.");
     }
-  }, [shipToPlace, currentOrientation, currentBoardCells, currentPlayer]);
+  }, [shipToPlace, currentOrientation, currentBoardCells, currentPlayer, isAiPlacing]);
 
-  // ボードのホバーハンドラ（プレビュー表示）
+  // マウスオーバー時のプレビュー
   const handleBoardHover = useCallback((coord: Coordinate) => {
     setHoverCoord(coord);
   }, []);
 
-  // ボードからマウスが離れた時
   const handleBoardLeave = useCallback(() => {
     setHoverCoord(null);
   }, []);
 
-  // 船を回転
   const handleRotateShip = useCallback(() => {
     setCurrentOrientation(prev => (prev === 'horizontal' ? 'vertical' : 'horizontal'));
   }, []);
 
-  // ランダム配置
-  const handleRandomPlacement = useCallback((playerId: number) => {
-    const newPlacedShips: PlacedShip[] = [];
-    let tempCells = createEmptyBoard(playerId).cells; // 仮のボード状態
-    let allShipsPlacedSuccessfully = true;
 
-    for (const shipDef of ALL_SHIPS) {
-      const placedShip = generateRandomShipPlacement(playerId, shipDef, newPlacedShips); // 既存の船を考慮して配置
-      if (placedShip) {
-        newPlacedShips.push(placedShip);
-        // 仮のボードを更新して、次の船の配置判断に使う (これは isShipPlacementValid の内部で処理されるのでここでは不要だが、念のため)
-        tempCells = placeShipOnBoard(tempCells, placedShip.definition, placedShip.start, placedShip.orientation);
-      } else {
-        console.error(`Failed to place ship ${shipDef.name} randomly for player ${playerId}.`);
-        allShipsPlacedSuccessfully = false;
-        break; // 一つでも配置できなければ中断
-      }
-    }
-
-    if (allShipsPlacedSuccessfully) {
-      setPlayerBoardShips(playerId, newPlacedShips); // Contextを更新
-      setCurrentPlacedShips(newPlacedShips); // UIの状態も更新
-      setCurrentShipIndex(ALL_SHIPS.length); // 全ての船を配置済みにする
-    } else {
-        console.error("Random placement failed for some ships. Resetting for manual placement.");
-        setCurrentShipIndex(0);
-        setCurrentPlacedShips([]);
-    }
-  }, [setPlayerBoardShips, ALL_SHIPS]);
-
-
-  // ★修正: 全てのプレイヤーの配置が完了したらゲーム開始、そうでなければ次のプレイヤーへ
-  // setPlayerBoardShips が Context の状態を更新した後に実行されるように useEffect を使用
+  // フェーズ進行とAIの自動配置を制御する主要な useEffect
   useEffect(() => {
-      // currentPlayer が定義されており、現在のフェーズが ship-placement であることを確認
-      if (!currentPlayer || phase !== 'ship-placement') {
+    if (phase !== 'ship-placement' || !currentPlayer) {
+      return;
+    }
+
+    const currentPlayersBoardInContext = playerBoards[currentPlayer.id];
+    const isCurrentPlayerShipsPlacedInContext = currentPlayersBoardInContext?.placedShips.length === ALL_SHIPS.length;
+
+    // AIプレイヤーの場合
+    if (currentPlayer.type === 'ai') {
+      // まだ配置がコンテキストに保存されていない場合、AI配置を開始
+      if (!isCurrentPlayerShipsPlacedInContext && !isAiPlacing) {
+        console.log(`AI ${currentPlayer.name} の船を自動配置開始...`);
+        handleRandomPlacement(currentPlayer.id);
+        // AIが配置を開始したら、このuseEffectは次のサイクルまで待つ
+        return;
+      }
+      // AIが配置を完了し、その情報がコンテキストに反映されたら、次の処理へ進む
+      // isAiPlacing が false になった後、この条件が true になることを期待
+      if (isCurrentPlayerShipsPlacedInContext && !isAiPlacing) {
+        console.log(`AI ${currentPlayer.name} の船の配置が完了しました。`);
+        // そのまま下の全プレイヤー配置完了チェックへ進む
+      } else {
+          // AI配置中、または既に配置済みだがまだ isAiPlacing が true の場合
           return;
       }
+    }
 
-      // 現在のプレイヤーのボードの placedShips が ALL_SHIPS の数と一致する場合
-      // かつ、それが実際に GameContext に反映されていることを確認 (UI state ではなく context state を参照)
-      const currentPlayersBoardInContext = playerBoards[currentPlayer.id];
-      if (currentPlayersBoardInContext && currentPlayersBoardInContext.placedShips.length === ALL_SHIPS.length) {
-          // 短い遅延を入れて UI 更新と Context の状態伝播を待つ
-          setTimeout(() => {
-              const activePlayers = players.filter(p => p.type !== 'none');
-              const currentPlayerIndex = activePlayers.findIndex(p => p.id === currentPlayer.id);
+    // 全てのプレイヤーの配置が完了したかチェック (人間、AI問わず)
+    const activePlayers = players.filter(p => p.type !== 'none');
+    const allActivePlayersPlaced = activePlayers.every(p =>
+      playerBoards[p.id]?.placedShips.length === ALL_SHIPS.length
+    );
 
-              if (currentPlayerIndex < activePlayers.length - 1) {
-                  // 次のプレイヤーの配置フェーズへ
-                  const nextPlayer = activePlayers[currentPlayerIndex + 1];
-                  // GameContext の currentPlayerTurnId を直接更新
-                  setGameState(prev => ({ ...prev, currentPlayerTurnId: nextPlayer.id }));
-              } else {
-                  // 全てのプレイヤーの配置が完了したらゲーム開始
-                  advancePhase('in-game');
-              }
-          }, 200); // 適切な遅延時間を設定
+    if (allActivePlayersPlaced) {
+      console.log("全てのプレイヤーの船が配置されました。ゲームを開始します。");
+      advancePhase('in-game');
+    } else if (isCurrentPlayerShipsPlacedInContext) {
+      // 現在のプレイヤーの配置が完了しており、かつまだ配置が必要なプレイヤーがいる場合
+      const currentPlayerIndex = activePlayers.findIndex(p => p.id === currentPlayer.id);
+      const nextPlayer = activePlayers[currentPlayerIndex + 1];
+
+      if (nextPlayer) {
+        console.log(`次のプレイヤー (${nextPlayer.name}) の配置へ進みます。`);
+        // currentPlayerTurnId を次のプレイヤーに設定
+        setGameState(prev => ({ ...prev, currentPlayerTurnId: nextPlayer.id }));
+      } else {
+        // これは起こるべきではない（allActivePlayersPlacedがtrueになるはず）が、念のため
+        console.warn("論理エラー: 全てのプレイヤーの配置が完了したはずなのに次のプレイヤーが見つかりません。");
+        advancePhase('in-game'); // 強制的にゲーム開始
       }
-  }, [playerBoards, players, currentPlayer, phase, setGameState, advancePhase]); // 依存配列に setGameState, advancePhase を追加
+    }
+    // else: 現在のプレイヤー（人間）がまだ配置中、またはまだ配置開始前の状態
+  }, [
+      phase,
+      currentPlayer,
+      playerBoards,
+      players,
+      isAiPlacing,
+      setGameState,
+      advancePhase,
+      handleRandomPlacement // useCallbackでラップされた関数は依存関係に入れる
+  ]);
 
 
-  // "配置完了" / "次のプレイヤーへ" ボタンのハンドラ
+  // 人間プレイヤーが「配置完了」ボタンを押すロジック
   const handleNextPlayerOrGameStart = useCallback(() => {
     if (currentPlacedShips.length === ALL_SHIPS.length) {
-      setPlayerBoardShips(currentPlayer?.id || 0, currentPlacedShips); // 最終確定をContextに保存
-      // ここで直接 next player や game start へ遷移するロジックは削除
-      // 上記の useEffect が setPlayerBoardShips の完了を検知して遷移する
+      setPlayerBoardShips(currentPlayer?.id || 0, currentPlacedShips);
+      // setPlayerBoardShips が呼ばれることで useEffect が再評価され、次のプレイヤーへの遷移が自動的に行われる
     } else {
       alert("全ての船を配置してください！");
     }
-  }, [currentPlacedShips, currentPlayer, setPlayerBoardShips]); // 依存配列から moveToNextPlayerOrGameStart を削除
+  }, [currentPlacedShips, currentPlayer, setPlayerBoardShips]);
 
 
   if (!currentPlayer || phase !== 'ship-placement') {
     return <div>船の配置フェーズではありません。</div>;
   }
 
-  // プレビュー用のセル状態を計算
+  // プレビュー表示のためのセル計算
   const previewCells = useMemo(() => {
+    // AIの場合、プレビューは不要なので現在のボードの状態を返す
+    if (currentPlayer.type === 'ai') {
+        return currentBoardCells;
+    }
     if (!hoverCoord || !shipToPlace) return currentBoardCells;
 
-    // ホバー中の船が有効かチェック
     const isValidPreview = isShipWithinBounds(hoverCoord, shipToPlace.size, currentOrientation) &&
                            isShipPlacementValid(currentBoardCells, hoverCoord, shipToPlace.size, currentOrientation);
 
-    if (!isValidPreview) return currentBoardCells; // 無効なプレビューは表示しない
+    if (!isValidPreview) return currentBoardCells;
 
+    // プレビュー用のセルをコピーして、元のボードの状態を変更しないようにする
     const cellsWithPreview = currentBoardCells.map(row => row.map(cell => ({ ...cell })));
 
     for (let i = 0; i < shipToPlace.size; i++) {
@@ -203,12 +267,11 @@ const ShipPlacement: React.FC<ShipPlacementProps> = () => {
       const y = currentOrientation === 'vertical' ? hoverCoord.y + i : hoverCoord.y;
 
       if (cellsWithPreview[y] && cellsWithPreview[y][x]) {
-        cellsWithPreview[y][x].status = 'ship'; // プレビュー中は常に 'ship' として表示
-        // 必要であれば、プレビュー用の特別なスタイルやクラスを追加するために、status を 'preview-ship' のようにすることも可能
+        cellsWithPreview[y][x].status = 'ship'; // プレビューとして船を表示
       }
     }
     return cellsWithPreview;
-  }, [hoverCoord, shipToPlace, currentOrientation, currentBoardCells]);
+  }, [hoverCoord, shipToPlace, currentOrientation, currentBoardCells, currentPlayer]);
 
 
   return (
@@ -220,12 +283,13 @@ const ShipPlacement: React.FC<ShipPlacementProps> = () => {
 
       <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '20px' }}>
         <BoardGrid
-          cells={previewCells} // プレビューセルを表示
-          isPlayerBoard={true} // 自分のボードとして表示
+          cells={previewCells}
+          isPlayerBoard={true}
           onCellClick={handleBoardClick}
           onCellHover={handleBoardHover}
           onBoardLeave={handleBoardLeave}
-          disableClick={currentPlayer.type === 'ai' || currentShipIndex >= ALL_SHIPS.length} // AIはクリックできないように & 全て配置済みならクリック不可
+          // AIが配置中、または全ての船が配置済みの場合はクリック無効
+          disableClick={currentPlayer.type === 'ai' || currentShipIndex >= ALL_SHIPS.length || isAiPlacing}
         />
       </div>
 
@@ -268,8 +332,7 @@ const ShipPlacement: React.FC<ShipPlacementProps> = () => {
           </button>
         )}
       </div>
-      {/* AIプレイヤーが配置中のメッセージ */}
-      {currentPlayer.type === 'ai' && currentShipIndex < ALL_SHIPS.length && (
+      {(currentPlayer.type === 'ai' || isAiPlacing) && (
         <p>AI ({currentPlayer.name}) が船を配置中...</p>
       )}
     </div>
