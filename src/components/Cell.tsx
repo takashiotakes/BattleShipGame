@@ -1,5 +1,5 @@
-import React from "react";
-import { CellStatus, Coordinate } from "../models/types";
+import React from 'react';
+import { CellStatus, Coordinate } from '../models/types';
 
 interface CellProps {
   coordinate: Coordinate;
@@ -9,26 +9,20 @@ interface CellProps {
   onMouseEnter?: (coord: Coordinate) => void;
 }
 
-const Cell: React.FC<CellProps> = ({
-  coordinate,
-  status,
-  isShipVisible,
-  onClick,
-  onMouseEnter,
-}) => {
+const Cell: React.FC<CellProps> = ({ coordinate, status, isShipVisible, onClick, onMouseEnter }) => {
   const getBackgroundColor = () => {
     switch (status) {
-      case "hit":
-        return "red"; // ヒット
-      case "miss":
-        return "lightgray"; // ミス
-      case "sunk":
-        return "darkred"; // 撃沈された船の一部
-      case "ship":
-        return isShipVisible ? "darkblue" : "lightblue"; // 自ボードなら船を表示、相手ボードなら空と同じ色
-      case "empty":
+      case 'hit':
+        return 'red'; // ヒット
+      case 'miss':
+        return 'lightgray'; // ミス
+      case 'sunk':
+        return 'darkred'; // 撃沈された船の一部
+      case 'ship':
+        return isShipVisible ? 'darkblue' : 'lightblue'; // 自ボードなら船を表示、相手ボードなら空と同じ色
+      case 'empty':
       default:
-        return "lightblue"; // 空のマス
+        return 'lightblue'; // 空のマス
     }
   };
 
@@ -47,11 +41,11 @@ const Cell: React.FC<CellProps> = ({
   return (
     <td
       style={{
-        width: "25px",
-        height: "25px",
-        border: "1px solid #333",
+        width: '25px',
+        height: '25px',
+        border: '1px solid #333',
         backgroundColor: getBackgroundColor(),
-        cursor: onClick ? "pointer" : "default",
+        cursor: onClick ? 'pointer' : 'default',
       }}
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}

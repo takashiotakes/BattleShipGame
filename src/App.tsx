@@ -4,24 +4,23 @@ import React, { useEffect } from 'react';
 import PlayerSelector from './components/PlayerSelector';
 import ShipPlacement from './components/ShipPlacement';
 import GameScreen from './components/GameScreen';
-import GameOverScreen from './components/GameOverScreen';
-import { GameProvider, useGame } from './contexts/GameContext';
+import { GameProvider, useGame } from './contexts/GameContext'; // GameProvider と useGame をインポート
 
 const AppContent: React.FC = () => {
   const { gameState, advancePhase, updatePlayers } = useGame();
 
   // 初期化時にプレイヤー設定を Context に渡す (初回のみ)
-  // GameContext の初期化で name が設定されるようになったため、このブロックは削除します。
-  // useEffect(() => {
-  //   if (gameState.players.length === 4 && gameState.players[0].name === undefined) {
-  //     updatePlayers([
-  //       { id: 0, name: 'プレイヤー1 (あなた)', type: 'human' },
-  //       { id: 1, name: 'プレイヤー2 (AI)', type: 'ai', difficulty: 'easy' },
-  //       { id: 2, name: 'プレイヤー3 (なし)', type: 'none' },
-  //       { id: 3, name: 'プレイヤー4 (なし)', type: 'none' },
-  //     ]);
-  //   }
-  // }, [gameState.players, updatePlayers]);
+  useEffect(() => {
+    // players が初期状態（デフォルトの4つの空オブジェクトなど）の場合にのみ更新
+    if (gameState.players.length === 4 && gameState.players[0].name === undefined) {
+      updatePlayers([
+        { id: 0, name: 'プレイヤー1 (あなた)', type: 'human' },
+        { id: 1, name: 'プレイヤー2 (AI)', type: 'ai', difficulty: 'easy' },
+        { id: 2, name: 'プレイヤー3 (なし)', type: 'none' },
+        { id: 3, name: 'プレイヤー4 (なし)', type: 'none' },
+      ]);
+    }
+  }, [gameState.players, updatePlayers]);
 
 
   const handleStartPlacement = () => {
@@ -44,7 +43,15 @@ const AppContent: React.FC = () => {
         <GameScreen />
       )}
       {gameState.phase === 'game-over' && (
-        <GameOverScreen />
+        <div>
+          <h2>ゲーム終了！</h2>
+          {gameState.winnerId !== null ? (
+            <p>{gameState.players.find(p => p.id === gameState.winnerId)?.name} の勝利！</p>
+          ) : (
+            <p>引き分け！</p>
+          )}
+          <button onClick={() => window.location.reload()}>もう一度プレイ</button> {/* 簡易リセット */}
+        </div>
       )}
     </div>
   );

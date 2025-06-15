@@ -34,76 +34,51 @@ export function isShipPlacementValid(
     const y = orientation === 'vertical' ? start.y + i : start.y;
 
     if (x < 0 || x >= 10 || y < 0 || y >= 10 || boardCells[y][x].status === 'ship') {
-      return false; // 範囲外または既に船がある
+      return false; // 範囲外または既存の船と衝突
     }
   }
   return true;
 }
 
-// ボード上に船を配置する（新しいボードを返す）
+// 船が配置されたボードを更新する関数
 export function placeShipOnBoard(
-  currentCells: Cell[][],
-  shipDefinition: ShipDefinition,
+  initialCells: Cell[][],
+  ship: ShipDefinition,
   start: Coordinate,
   orientation: Orientation
 ): Cell[][] {
-  const newCells = currentCells.map(row => row.map(cell => ({ ...cell }))); // ディープコピー
+  const newCells = initialCells.map(row => row.map(cell => ({ ...cell }))); // ディープコピー
 
-  for (let i = 0; i < shipDefinition.size; i++) {
+  for (let i = 0; i < ship.size; i++) {
     const x = orientation === 'horizontal' ? start.x + i : start.x;
     const y = orientation === 'vertical' ? start.y + i : start.y;
-    if (newCells[y] && newCells[y][x]) {
-      newCells[y][x].status = 'ship';
-      newCells[y][x].shipId = shipDefinition.id;
-    }
+    newCells[y][x] = { ...newCells[y][x], status: 'ship', shipId: ship.id };
   }
   return newCells;
 }
 
-// 船の配置と攻撃結果に基づいてセル状態を更新するヘルパー関数
-export function updateCellsWithShips(
-  initialCells: Cell[][],
-  placedShips: PlacedShip[],
-  isPlayerBoard: boolean
-): Cell[][] {
-  const newCells = initialCells.map(row => row.map(cell => ({ ...cell, status: 'empty', shipId: undefined })));
+// ボードのセルに船の状態を反映させる (表示用)
+export function updateCellsWithShips(cells: Cell[][], placedShips: PlacedShip[]): Cell[][] {
+  const newCells = cells.map(row => row.map(cell => ({ ...cell }))); // ディープコピー
 
   placedShips.forEach(pShip => {
-    // まず船を配置
     for (let i = 0; i < pShip.definition.size; i++) {
       const x = pShip.orientation === 'horizontal' ? pShip.start.x + i : pShip.start.x;
       const y = pShip.orientation === 'vertical' ? pShip.start.y + i : pShip.start.y;
 
       if (newCells[y] && newCells[y][x]) {
-        // プレイヤー自身のボードの場合のみ船を表示
-        if (isPlayerBoard) {
-          newCells[y][x] = { ...newCells[y][x], status: 'ship', shipId: pShip.id };
+        // すでにヒットしているセルや沈んでいるセルは上書きしない
+        if (pShip.isSunk) {
+            newCells[y][x] = { ...newCells[y][x], status: 'sunk', shipId: pShip.id };
+        } else if (pShip.hits.some(h => h.x === x && h.y === y)) {
+            newCells[y][x] = { ...newCells[y][x], status: 'hit', shipId: pShip.id };
         } else {
-          // 相手ボードでは船の初期状態は'empty' (見えない)
-          newCells[y][x] = { ...newCells[y][x], status: 'empty', shipId: pShip.id };
-        }
-      }
-    }
-
-    // ヒットしたマスを反映
-    pShip.hits.forEach(hitCoord => {
-      if (newCells[hitCoord.y] && newCells[hitCoord.y][hitCoord.x]) {
-        newCells[hitCoord.y][hitCoord.x] = { ...newCells[hitCoord.y][hitCoord.x], status: 'hit', shipId: pShip.id };
-      }
-    });
-
-    // 撃沈された船を反映
-    if (pShip.isSunk) {
-      for (let i = 0; i < pShip.definition.size; i++) {
-        const x = pShip.orientation === 'horizontal' ? pShip.start.x + i : pShip.start.x;
-        const y = pShip.orientation === 'vertical' ? pShip.start.y + i : pShip.start.y;
-        if (newCells[y] && newCells[y][x]) {
-          newCells[y][x] = { ...newCells[y][x], status: 'sunk', shipId: pShip.id };
+            // 何もなければ船として表示
+            newCells[y][x] = { ...newCells[y][x], status: 'ship', shipId: pShip.id };
         }
       }
     }
   });
-
   return newCells;
 }
 
@@ -137,8 +112,8 @@ export function generateRandomShipPlacement(
       return {
         id: shipDefinition.id,
         definition: shipDefinition,
-        start: start,
-        orientation: orientation,
+        start,
+        orientation,
         hits: [],
         isSunk: false,
       };
@@ -146,5 +121,5 @@ export function generateRandomShipPlacement(
     attempts++;
   }
   console.warn(`Failed to place ship ${shipDefinition.name} after ${maxAttempts} attempts.`);
-  return null;
+  return null; // 配置できなかった場合
 }
