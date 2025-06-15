@@ -1,7 +1,6 @@
 // src/lib/boardUtils.ts
 
-import { Cell, CellStatus, Coordinate, Orientation, PlacedShip, ShipDefinition } from '../models/types';
-import { ALL_SHIPS } from '../models/types'; // ALL_SHIPS をインポート
+import { Cell, CellStatus, Coordinate, Orientation, PlacedShip, ShipDefinition, PlayerBoard } from '../models/types';
 
 export function createEmptyBoard(playerId: number): { playerId: number; cells: Cell[][] } {
   const cells: Cell[][] = [];
@@ -34,64 +33,121 @@ export function isShipPlacementValid(
     const x = orientation === 'horizontal' ? start.x + i : start.x;
     const y = orientation === 'vertical' ? start.y + i : start.y;
 
-    if (x < 0 || x >= 10 || y < 0 || y >= 10 || boardCells[y][x].status === 'ship') {
-      return false; // 範囲外または既存の船と衝突
+    // 範囲チェックはisShipWithinBoundsで別途行うため、ここでは不要だが念のため
+    if (x < 0 || x >= 10 || y < 0 || y >= 10) {
+      return false;
+    }
+    // 'ship' または 'sunk' のマスに重ねて配置できないようにする
+    if (boardCells[y][x].status === 'ship' || boardCells[y][x].status === 'sunk') {
+      return false; // 既に船があるマスとは衝突
     }
   }
   return true;
 }
 
-// 船をボードに配置するヘルパー関数（実際にCellの状態を更新）
+
+// 船をボードに配置するヘルパー関数
+// (placedShips から更新されるので、直接 boardCells を更新するロジックは削除)
 export function placeShipOnBoard(
-  initialCells: Cell[][],
+  currentCells: Cell[][],
   shipDefinition: ShipDefinition,
   start: Coordinate,
   orientation: Orientation
 ): Cell[][] {
-  const newCells = initialCells.map(row => [...row]); // ディープコピー
+  const newCells = currentCells.map(row => [...row]); // ディープコピー
   for (let i = 0; i < shipDefinition.size; i++) {
     const x = orientation === 'horizontal' ? start.x + i : start.x;
     const y = orientation === 'vertical' ? start.y + i : start.y;
-    if (newCells[y] && newCells[y][x]) { // 範囲チェック
+    if (newCells[y] && newCells[y][x]) { // 範囲外アクセス防止
       newCells[y][x] = { ...newCells[y][x], status: 'ship', shipId: shipDefinition.id };
     }
   }
   return newCells;
 }
 
-// 既存のplacedShipsに基づいてcellsの状態を更新する関数
-// isShipVisible: 自分のボードの船を表示するか、相手のボードのように非表示にするか
-export function updateCellsWithShips(
-  initialCells: Cell[][],
-  placedShips: PlacedShip[],
-  isShipVisible: boolean
-): Cell[][] {
-  let newCells = initialCells.map(row => row.map(cell => ({ ...cell, status: 'empty', shipId: undefined }))); // 初期化
+// 船が全て撃沈されたかチェックする関数
+export function checkShipSunk(placedShip: PlacedShip, attackedCells: { [key: string]: 'hit' | 'miss' }): boolean {
+  for (let i = 0; i < placedShip.definition.size; i++) {
+    const x = placedShip.orientation === 'horizontal' ? placedShip.start.x + i : placedShip.start.x;
+    const y = placedShip.orientation === 'vertical' ? placedShip.start.y + i : placedShip.start.y;
+    const coordKey = `${x},${y}`;
+    if (attackedCells[coordKey] !== 'hit') {
+      return false; // 1箇所でもヒットしていなければ沈んでいない
+    }
+  }
+  return true;
+}
 
-  placedShips.forEach(pShip => {
-    for (let i = 0; i < pShip.definition.size; i++) {
-      const x = pShip.orientation === 'horizontal' ? pShip.start.x + i : pShip.start.x;
-      const y = pShip.orientation === 'vertical' ? pShip.start.y + i : pShip.start.y;
+// 全ての船が沈没したかチェックする関数
+export function checkAllShipsSunk(placedShips: PlacedShip[]): boolean {
+  return placedShips.every(ship => ship.isSunk);
+}
 
-      if (newCells[y] && newCells[y][x]) {
-        // まずは 'empty' で初期化されているので、船があるマスを 'ship' に設定
-        newCells[y][x] = { ...newCells[y][x], status: 'ship', shipId: pShip.id };
 
-        // ヒットしたマス、沈没したマスを上書き
-        const hitCoord = pShip.hits.find(h => h.x === x && h.y === y);
-        if (hitCoord) {
-          newCells[y][x] = { ...newCells[y][x], status: pShip.isSunk ? 'sunk' : 'hit', shipId: pShip.id };
-        } else if (!isShipVisible && newCells[y][x].status === 'ship') {
-          // 相手のボードで、まだ攻撃されていない船は 'empty' として表示（見えない状態）
-          newCells[y][x] = { ...newCells[y][x], status: 'empty' };
+// 攻撃結果に基づいてボードのセルを更新し、被弾した船の情報を更新する関数
+export function applyAttackToBoard(
+  originalBoard: PlayerBoard,
+  coord: Coordinate
+): { updatedBoard: PlayerBoard; hitShipId?: string; isSunk?: boolean; allShipsSunk: boolean } {
+  const newCells = originalBoard.cells.map(row => [...row]);
+  const newPlacedShips = originalBoard.placedShips.map(ship => ({ ...ship, hits: [...ship.hits] })); // ディープコピー
+  const newAttackedCells = { ...originalBoard.attackedCells };
+
+  const { x, y } = coord;
+  const targetCell = newCells[y][x];
+
+  let hit = false;
+  let hitShipId: string | undefined;
+  let isSunk = false;
+  let allShipsSunk = false;
+
+  newAttackedCells[`${x},${y}`] = 'miss'; // デフォルトはミス
+
+  if (targetCell.status === 'ship') {
+    hit = true;
+    targetCell.status = 'hit'; // セルをヒット状態に更新
+    newAttackedCells[`${x},${y}`] = 'hit'; // 攻撃済みセルをヒットとして記録
+
+    // どの船がヒットしたか特定し、ヒット情報を更新
+    const shipToUpdate = newPlacedShips.find(ship => ship.id === targetCell.shipId);
+    if (shipToUpdate) {
+      shipToUpdate.hits.push(coord); // ヒット座標を追加
+      hitShipId = shipToUpdate.id;
+
+      // 船が全てヒットしたかチェックし、沈没状態を更新
+      if (shipToUpdate.hits.length === shipToUpdate.definition.size) {
+        shipToUpdate.isSunk = true;
+        isSunk = true;
+        // 沈没した船のセルを 'sunk' に更新
+        for (let i = 0; i < shipToUpdate.definition.size; i++) {
+          const sx = shipToUpdate.orientation === 'horizontal' ? shipToUpdate.start.x + i : shipToUpdate.start.x;
+          const sy = shipToUpdate.orientation === 'vertical' ? shipToUpdate.start.y + i : shipToUpdate.start.y;
+          if (newCells[sy] && newCells[sy][sx]) {
+            newCells[sy][sx].status = 'sunk';
+          }
         }
       }
     }
-  });
+  } else {
+    // 船がない場合、または既にヒット/ミスのマスの場合、ステータスはそのまま
+    // ただし、'empty' の場合は 'miss' にする
+    if (targetCell.status === 'empty') {
+      targetCell.status = 'miss';
+    }
+  }
 
-  return newCells;
+  // 全ての船が沈没したか最終チェック
+  allShipsSunk = newPlacedShips.every(ship => ship.isSunk);
+
+  const updatedBoard: PlayerBoard = {
+    ...originalBoard,
+    cells: newCells,
+    placedShips: newPlacedShips,
+    attackedCells: newAttackedCells,
+  };
+
+  return { updatedBoard, hitShipId, isSunk, allShipsSunk };
 }
-
 
 // ランダムに船を配置するヘルパー関数
 export function generateRandomShipPlacement(
@@ -99,14 +155,10 @@ export function generateRandomShipPlacement(
   shipDefinition: ShipDefinition,
   existingPlacedShips: PlacedShip[]
 ): PlacedShip | null {
-  // ここでの currentCells は、まだplacedShipsが反映されていない（empty）ボードを使用
-  // isShipPlacementValid が既存のshipと衝突しないか見ているため、
-  // 既存の船を考慮した配置が可能になるように修正する
-  const tempCellsForValidation = createEmptyBoard(boardId).cells;
-  let currentCellsForValidation = tempCellsForValidation;
-
+  // 既存の船が配置された状態の仮想ボードを作成
+  let tempCells = createEmptyBoard(boardId).cells;
   existingPlacedShips.forEach(pShip => {
-    currentCellsForValidation = placeShipOnBoard(currentCellsForValidation, pShip.definition, pShip.start, pShip.orientation);
+    tempCells = placeShipOnBoard(tempCells, pShip.definition, pShip.start, pShip.orientation);
   });
 
   const orientations: Orientation[] = ['horizontal', 'vertical'];
@@ -120,14 +172,15 @@ export function generateRandomShipPlacement(
       y: Math.floor(Math.random() * 10),
     };
 
+    // 既存の船が配置された tempCells を使って有効性をチェック
     if (isShipWithinBounds(start, shipDefinition.size, orientation) &&
-      isShipPlacementValid(currentCellsForValidation, start, shipDefinition.size, orientation)) { // ここで既存船を考慮したボードを使う
+        isShipPlacementValid(tempCells, start, shipDefinition.size, orientation)) {
       return {
-        id: shipDefinition.id, // ShipDefinition の id をそのまま使用
+        id: shipDefinition.id,
         definition: shipDefinition,
-        start: start,
-        orientation: orientation,
-        hits: [],
+        start,
+        orientation,
+        hits: [], // 新しく配置される船なのでヒットはまだない
         isSunk: false,
       };
     }
@@ -135,15 +188,4 @@ export function generateRandomShipPlacement(
   }
   console.warn(`Failed to place ship ${shipDefinition.name} after ${maxAttempts} attempts.`);
   return null;
-}
-
-// 船が完全に沈没したかを判定する関数
-export function isShipSunk(ship: PlacedShip): boolean {
-  // 船のサイズとヒット数が同じであれば沈没
-  return ship.definition.size === ship.hits.length;
-}
-
-// ボード上の全ての船が沈没したか判定する関数
-export function areAllShipsSunk(placedShips: PlacedShip[]): boolean {
-  return placedShips.every(ship => ship.isSunk);
 }

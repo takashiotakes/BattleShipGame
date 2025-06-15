@@ -2,7 +2,7 @@
 
 export type PlayerType = 'human' | 'ai' | 'none';
 
-export type AIDifficulty = 'easy' | 'normal' | 'hard'; // 'hard' は強化される
+export type AIDifficulty = 'easy' | 'normal' | 'hard';
 
 export type GamePhase =
   | 'select-players'
@@ -56,8 +56,7 @@ export interface PlayerBoard {
   playerId: number;
   cells: Cell[][];
   placedShips: PlacedShip[]; // 配置済みの船のリスト
-  // attackedCells を強化し、攻撃したマスの状態を記録
-  attackedCells: { [key: string]: CellStatus }; // 例: '0,0': 'hit', '0,1': 'miss'
+  attackedCells: { [key: string]: 'hit' | 'miss' }; // 攻撃した座標と結果
 }
 
 export interface GameState {
@@ -76,9 +75,14 @@ export interface Coordinate {
 // AttackResult を修正
 export interface AttackResult {
   hit: boolean;
-  sunkShipId?: string; // 船が沈んだ場合、その船のID
-  isGameOver: boolean; // ゲームが終了したかどうか
+  sunkShipId?: string; // 船が撃沈された場合、その船のID
+  allShipsSunk: boolean; // 全ての船が撃沈されたか
 }
 
-// AI 攻撃のための型
-export type AITargetingMode = 'hunting' | 'targeting';
+export const ALL_SHIPS: ShipDefinition[] = [
+  { id: 'carrier-0', name: '空母', size: 5 },
+  { id: 'battleship-0', name: '戦艦', size: 4 },
+  { id: 'destroyer-0', name: '駆逐艦', size: 3 },
+  { id: 'submarine-0', name: '潜水艦', size: 3 },
+  { id: 'patrol-0', name: '巡視艇', size: 2 },
+];
