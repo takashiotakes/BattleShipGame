@@ -1,7 +1,7 @@
-// src/components/BoardGrid.tsx (新規作成または既存を修正)
+// src/components/BoardGrid.tsx
 
-import React, { useCallback } from "react";
-import { Cell, Coordinate, CellStatus } from "../models/types";
+import React, { useCallback } from 'react';
+import { Cell, Coordinate, CellStatus } from '../models/types';
 
 interface BoardGridProps {
   cells: Cell[][];
@@ -43,33 +43,32 @@ const BoardGrid: React.FC<BoardGridProps> = ({
       if (isPlayerBoard) {
         // 自分のボードの場合
         switch (status) {
-          case "empty":
-            return "#add8e6"; // 薄い青 (海)
-          case "ship":
-            return "#8b4513"; // 茶色 (未被弾の船)
-          case "hit":
-            return "#ff4500"; // 赤 (被弾した船)
-          case "miss":
-            return "#6a5acd"; // スレートブルー (攻撃ミス)
-          case "sunk":
-            return "#4b0082"; // インディゴ (沈没した船)
+          case 'empty':
+            return '#add8e6'; // 薄い青 (空のマス)
+          case 'ship':
+            return '#4682b4'; // スチールブルー (配置された船)
+          case 'hit':
+            return '#ff4500'; // オレンジレッド (被弾したマス)
+          case 'miss':
+            return '#6a5acd'; // スレートブルー (攻撃ミス)
+          case 'sunk':
+            return '#4b0082'; // インディゴ (沈没した船)
           default:
-            return "#add8e6";
+            return '#add8e6';
         }
       } else {
-        // 相手のボードの場合 (見えない船)
+        // 相手のボードの場合
         switch (status) {
-          case "empty":
-            return "#add8e6"; // 薄い青 (海)
-          case "hit":
-            return "#ff4500"; // 赤 (被弾したマス)
-          case "miss":
-            return "#6a5acd"; // スレートブルー (攻撃ミス)
-          case "sunk":
-            return "#4b0082"; // インディゴ (沈没した船)
-          case "ship": // 相手のボードでは船は見えない
+          case 'hit':
+            return '#ff4500'; // 赤 (被弾したマス)
+          case 'miss':
+            return '#6a5acd'; // スレートブルー (攻撃ミス)
+          case 'sunk':
+            return '#4b0082'; // インディゴ (沈没した船)
+          case 'ship': // 相手のボードでは船は見えない (撃沈時以外)
+          case 'empty': // 相手のボードでは船や空のマスは同じ色
           default:
-            return "#add8e6";
+            return '#add8e6'; // 空のマスと同じ色にする
         }
       }
     },
@@ -79,10 +78,10 @@ const BoardGrid: React.FC<BoardGridProps> = ({
   return (
     <table
       style={{
-        borderCollapse: "collapse",
-        margin: "0 auto",
-        textAlign: "center",
-        cursor: disableClick ? "not-allowed" : "pointer",
+        borderCollapse: 'collapse',
+        margin: '0 auto',
+        textAlign: 'center',
+        cursor: disableClick ? 'not-allowed' : (onCellClick ? 'pointer' : 'default'), // クリックハンドラーがある場合のみポインター
       }}
       onMouseLeave={onBoardLeave}
     >
@@ -102,14 +101,16 @@ const BoardGrid: React.FC<BoardGridProps> = ({
               <td
                 key={`${cell.x},${cell.y}`}
                 style={{
-                  width: "30px", // セルのサイズを少し大きく
-                  height: "30px",
-                  border: "1px solid #333",
+                  width: '30px', // セルのサイズを少し大きく
+                  height: '30px',
+                  border: '1px solid #333',
                   backgroundColor: getCellColor(cell.status, cell.x, cell.y),
                 }}
                 onClick={() => handleCellClick(cell.x, cell.y)}
                 onMouseEnter={() => handleCellHover(cell.x, cell.y)}
-              ></td>
+              >
+                {/* 必要に応じて表示内容を追加（例: ヒットマークなど） */}
+              </td>
             ))}
           </tr>
         ))}

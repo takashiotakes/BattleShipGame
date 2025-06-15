@@ -25,6 +25,16 @@ export interface ShipDefinition {
   size: number;
 }
 
+// 全ての船の定義
+export const ALL_SHIPS: ShipDefinition[] = [
+  { id: 'carrier-0', name: '空母', size: 5 },
+  { id: 'battleship-0', name: '戦艦', size: 4 },
+  { id: 'destroyer-0', name: '駆逐艦', size: 3 },
+  { id: 'submarine-0', name: '潜水艦', size: 3 },
+  { id: 'patrol-0', name: '巡視艇', size: 2 },
+];
+
+
 // 船の配置情報（まだボードに置かれていない、プレイヤーが選択中の船など）
 export interface TemporaryShipPlacement {
   ship: ShipDefinition;
@@ -56,7 +66,7 @@ export interface PlayerBoard {
   playerId: number;
   cells: Cell[][];
   placedShips: PlacedShip[]; // 配置済みの船のリスト
-  attackedCells: { [key: string]: 'hit' | 'miss' }; // 攻撃した座標と結果
+  attackedCells: { [key: string]: 'hit' | 'miss' }; // 攻撃した座標と結果（座標の文字列キーを持つオブジェクト）
 }
 
 export interface GameState {
@@ -64,7 +74,7 @@ export interface GameState {
   playerBoards: { [playerId: number]: PlayerBoard };
   phase: GamePhase;
   currentPlayerTurnId: number; // 現在のターンプレイヤーID
-  winnerId: number | null; // 勝者プレイヤーID
+  winnerId: number | null; // 勝者プレイヤーID (nullの場合は引き分け、またはまだ決まっていない)
 }
 
 export interface Coordinate {
@@ -75,14 +85,5 @@ export interface Coordinate {
 // AttackResult を修正
 export interface AttackResult {
   hit: boolean;
-  sunkShipId?: string; // 船が撃沈された場合、その船のID
-  allShipsSunk: boolean; // 全ての船が撃沈されたか
+  sunkShipId?: string; // 撃沈された船のID (オプション)
 }
-
-export const ALL_SHIPS: ShipDefinition[] = [
-  { id: 'carrier-0', name: '空母', size: 5 },
-  { id: 'battleship-0', name: '戦艦', size: 4 },
-  { id: 'destroyer-0', name: '駆逐艦', size: 3 },
-  { id: 'submarine-0', name: '潜水艦', size: 3 },
-  { id: 'patrol-0', name: '巡視艇', size: 2 },
-];

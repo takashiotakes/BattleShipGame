@@ -1,14 +1,28 @@
 // src/components/GameScreen.tsx
 
-import React, { useMemo, useCallback, useEffect, useState, useRef } from 'react';
-import { useGame } from '../contexts/GameContext';
-import BoardGrid from './BoardGrid';
-import { createEmptyBoard, applyAttackToBoard, checkAllShipsSunk } from '../lib/boardUtils'; // applyAttackToBoardをインポート
-import { PlayerBoard, AttackResult, Coordinate, PlayerSettings, Cell } from '../models/types'; // PlayerSettings と Cell をインポート
+import React, {
+  useMemo,
+  useCallback,
+  useEffect,
+  useState,
+  useRef,
+} from "react";
+import { useGame } from "../contexts/GameContext";
+import BoardGrid from "./BoardGrid";
+import { updateCellsWithShips, createEmptyBoard } from "../lib/boardUtils";
+import {
+  PlayerBoard,
+  AttackResult,
+  Coordinate,
+  PlayerSettings,
+  ALL_SHIPS,
+} from "../models/types";
+import { useAiAttackLogic } from "../utils/useAiAttackLogic";
 
 const GameScreen: React.FC = () => {
-  const { gameState, advanceTurn, handleAttack, setGameState } = useGame(); // setGameState も使用
-  const { players, playerBoards, currentPlayerTurnId, phase } = gameState;
+  const { gameState, advanceTurn, handleAttack } = useGame(); // setGameState はここで直接使用しない
+  const { players, playerBoards, currentPlayerTurnId, phase, winnerId } =
+    gameState;
 
   // 最新の gameState を useRef で保持する (非同期処理内で最新の状態を参照するため)
   const gameStateRef = useRef(gameState);
@@ -16,226 +30,256 @@ const GameScreen: React.FC = () => {
     gameStateRef.current = gameState;
   }, [gameState]);
 
-  const currentPlayer = useMemo(() => players.find(p => p.id === currentPlayerTurnId), [players, currentPlayerTurnId]);
-
-  const myBoard = useMemo(() => playerBoards[currentPlayerTurnId], [playerBoards, currentPlayerTurnId]);
-
+  const currentPlayer = useMemo(
+    () => players.find((p) => p.id === currentPlayerTurnId),
+    [players, currentPlayerTurnId]
+  );
+  const myBoard = useMemo(
+    () => playerBoards[currentPlayerTurnId],
+    [playerBoards, currentPlayerTurnId]
+  );
   const opponentPlayer = useMemo(() => {
-    // currentPlayerTurnId 以外の、最初の「none」ではないプレイヤーを見つける
-    return players.find(p => p.id !== currentPlayerTurnId && p.type !== 'none');
-  }, [players, currentPlayerTurnId]);
-
-  const opponentBoard = useMemo(() => opponentPlayer ? playerBoards[opponentPlayer.id] : null, [opponentPlayer, playerBoards]);
-
-  // メッセージ表示用
-  const [message, setMessage] = useState<string>('');
-  // 攻撃処理中のフラグ
-  const [isAttackOngoing, setIsAttackOngoing] = useState<boolean>(false);
-
-
-  // ★修正箇所★ myDisplayCells
-  const myDisplayCells = useMemo(() => {
-    // myBoard が存在しない場合は空のボードを返す
-    if (!myBoard) return createEmptyBoard(-1).cells; // 仮のID
-
-    const cells: Cell[][] = [];
-    for (let y = 0; y < 10; y++) {
-      cells[y] = [];
-      for (let x = 0; x < 10; x++) {
-        // 自分のボードなので常に船を表示
-        cells[y][x] = { ...myBoard.cells[y][x], isShipVisible: true };
-      }
-    }
-    return cells;
-  }, [myBoard]);
-
-  // ★修正箇所★ opponentDisplayCells
-  const opponentDisplayCells = useMemo(() => {
-    // opponentBoard が存在しない場合は空のボードを返す
-    if (!opponentBoard) return createEmptyBoard(-1).cells; // 仮のID
-
-    const cells: Cell[][] = [];
-    for (let y = 0; y < 10; y++) {
-      cells[y] = [];
-      for (let x = 0; x < 10; x++) {
-        const originalCell = opponentBoard.cells[y][x];
-        const attackedStatus = opponentBoard.attackedCells[`${x},${y}`];
-
-        // 相手のボードでは船の位置は通常見えない
-        let statusToShow = originalCell.status;
-        let isShipVisible = false;
-
-        if (attackedStatus === 'hit') {
-          statusToShow = 'hit';
-        } else if (attackedStatus === 'miss') {
-          statusToShow = 'miss';
-        } else if (originalCell.status === 'sunk') {
-          // 船が沈没した場合は、相手ボードにも船が見えるようになる
-          statusToShow = 'sunk';
-          isShipVisible = true; // 沈没した船は見える
-        } else {
-          statusToShow = 'empty'; // 攻撃していないマスは'empty'として表示
-        }
-
-        cells[y][x] = {
-          x,
-          y,
-          status: statusToShow,
-          shipId: originalCell.shipId, // shipIdは保持するが、isShipVisibleで制御
-          isShipVisible: isShipVisible,
-        };
-      }
-    }
-    return cells;
-  }, [opponentBoard]);
-
-
-  // AIの攻撃ロジック
-  const handleAIAttack = useCallback(async () => {
-    if (isAttackOngoing || !opponentPlayer || !myBoard || currentPlayer?.type !== 'ai') {
-      return;
-    }
-
-    setIsAttackOngoing(true);
-    setMessage(`${currentPlayer.name} が攻撃中...`);
-
-    // 短い遅延を入れてAIが考えているように見せる
-    await new Promise(resolve => setTimeout(resolve, 1000));
-
-    // 簡単なAIロジック（ランダムな座標を攻撃）
-    let attackCoord: Coordinate;
-    let attempts = 0;
-    const maxAttempts = 100; // 無限ループ防止
-
-    do {
-      attackCoord = {
-        x: Math.floor(Math.random() * 10),
-        y: Math.floor(Math.random() * 10),
-      };
-      attempts++;
-    } while (
-      // 既に攻撃済みのマスは避ける
-      gameStateRef.current.playerBoards[myBoard.playerId]?.attackedCells[`${attackCoord.x},${attackCoord.y}`] &&
-      attempts < maxAttempts
+    return players.find(
+      (p) => p.id !== currentPlayerTurnId && p.type !== "none"
     );
+  }, [players, currentPlayerTurnId]);
+  const opponentBoard = useMemo(
+    () => (opponentPlayer ? playerBoards[opponentPlayer.id] : null),
+    [opponentPlayer, playerBoards]
+  );
 
-    if (attempts >= maxAttempts) {
-      console.warn("AI could not find an unattacked cell after many attempts.");
-      setIsAttackOngoing(false);
-      advanceTurn();
-      return;
-    }
+  const [message, setMessage] = useState<string>("");
+  const [isAttackOngoing, setIsAttackOngoing] = useState<boolean>(false); // 攻撃アニメーション中かどうか
 
-    // ContextのhandleAttackを呼び出す
-    const attackResult = handleAttack(currentPlayer.id, myBoard.playerId, attackCoord);
+  const { getAiAttackCoordinate } = useAiAttackLogic();
 
-    // AI攻撃後のメッセージ
-    if (attackResult.hit) {
-      setMessage(`${currentPlayer.name} の攻撃！ヒット！`);
-      if (attackResult.sunkShipId) {
-        // 撃沈された船の名前を見つける
-        const sunkShipName = ALL_SHIPS.find(s => s.id === attackResult.sunkShipId)?.name;
-        setMessage(prev => `${prev} 敵の${sunkShipName}を撃沈しました！`);
+  const myDisplayCells = useMemo(() => {
+    if (!myBoard) return createEmptyBoard(currentPlayerTurnId).cells;
+    return updateCellsWithShips(myBoard.cells, myBoard.placedShips);
+  }, [myBoard, currentPlayerTurnId]);
+
+  const opponentDisplayCells = useMemo(() => {
+    if (!opponentBoard) return createEmptyBoard(opponentPlayer?.id || 0).cells;
+    const cells = opponentBoard.cells.map((row) =>
+      row.map((cell) => {
+        // 相手のボードでは船のマスは「empty」として扱う（見えないため）。
+        // 'empty', 'hit', 'miss', 'sunk' はそのまま表示。
+        if (cell.status === "ship") {
+          return { ...cell, status: "empty" }; // 船のマスのみ 'empty' に設定して隠す
+        }
+        return cell;
+      })
+    );
+    // 撃沈された船は表示する
+    return updateCellsWithShips(
+      cells,
+      opponentBoard.placedShips.filter((ship) => ship.isSunk)
+    );
+  }, [opponentBoard, opponentPlayer?.id]);
+
+  const handleCellClick = useCallback(
+    (coord: Coordinate) => {
+      // ゲーム終了済み、AIのターン、または攻撃アニメーション中の場合はクリックを無効化
+      if (
+        winnerId !== null ||
+        currentPlayer?.type === "ai" ||
+        isAttackOngoing
+      ) {
+        return;
       }
-    } else {
-      setMessage(`${currentPlayer.name} の攻撃！ミス！`);
-    }
 
-    // 攻撃結果が全滅でなければターンを進める
-    if (!attackResult.allShipsSunk) {
-      // 少し遅延させて結果を見せる
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      advanceTurn();
-    } else {
-      // ゲーム終了なのでメッセージを保持
-      setMessage(prev => `${prev} ${opponentPlayer.name} の船が全て沈みました！`);
-    }
+      if (currentPlayer?.type === "human" && opponentPlayer) {
+        setIsAttackOngoing(true); // 攻撃開始
+        setMessage(
+          `攻撃中... ${String.fromCharCode(65 + coord.x)}${coord.y + 1} へ！`
+        );
 
-    setIsAttackOngoing(false);
-  }, [currentPlayer, opponentPlayer, myBoard, handleAttack, advanceTurn, isAttackOngoing]);
+        setTimeout(() => {
+          const result = handleAttack(
+            currentPlayer.id,
+            opponentPlayer.id,
+            coord
+          );
+          if (result.hit) {
+            setMessage(
+              `ヒット！ ${
+                result.sunkShipId
+                  ? ALL_SHIPS.find((s) => s.id === result.sunkShipId)?.name +
+                    " を撃沈！"
+                  : ""
+              }`
+            );
+          } else {
+            setMessage("ミス！");
+          }
 
-
-  // 人間プレイヤーの攻撃処理
-  const handleHumanAttack = useCallback((coord: Coordinate) => {
-    if (isAttackOngoing || !opponentPlayer || !opponentBoard || currentPlayer?.type !== 'human') {
-      return;
-    }
-
-    setIsAttackOngoing(true);
-    setMessage(`攻撃中...`);
-
-    // すでに攻撃済みのマスは攻撃できない
-    const coordKey = `${coord.x},${coord.y}`;
-    if (opponentBoard.attackedCells[coordKey]) {
-      setMessage('そこはもう攻撃しました！');
-      setIsAttackOngoing(false);
-      return;
-    }
-
-    const attackResult = handleAttack(currentPlayer.id, opponentPlayer.id, coord);
-
-    if (attackResult.hit) {
-      setMessage(`あなたの攻撃！ヒット！`);
-      if (attackResult.sunkShipId) {
-        const sunkShipName = ALL_SHIPS.find(s => s.id === attackResult.sunkShipId)?.name;
-        setMessage(prev => `${prev} 敵の${sunkShipName}を撃沈しました！`);
+          setTimeout(() => {
+            // メッセージ表示後に少し間をおいてターンを渡す
+            setIsAttackOngoing(false); // 攻撃終了フラグをリセット
+            // 勝者がまだ決まっていなければターンを進める
+            // handleAttackの内部でwinnerIdが設定されるため、gameStateRef.currentで最新の状態を確認
+            if (gameStateRef.current.winnerId === null) {
+              advanceTurn();
+            }
+          }, 1000); // 1秒遅延
+        }, 500); // 攻撃アニメーションの待機時間
       }
-    } else {
-      setMessage(`あなたの攻撃！ミス！`);
-    }
+    },
+    [
+      currentPlayer,
+      opponentPlayer,
+      handleAttack,
+      isAttackOngoing,
+      winnerId,
+      advanceTurn,
+    ]
+  );
 
-    if (!attackResult.allShipsSunk) {
-      // 少し遅延させて結果を見せる
-      setTimeout(() => {
-        advanceTurn();
-        setIsAttackOngoing(false); // ターンが進んだら攻撃中フラグを解除
-      }, 1500);
-    } else {
-      // ゲーム終了
-      setIsAttackOngoing(false); // ゲーム終了なのでフラグ解除
-    }
-  }, [currentPlayer, opponentPlayer, opponentBoard, handleAttack, advanceTurn, isAttackOngoing]);
-
-
-  // AIのターンになったら自動で攻撃を開始
+  // AIの攻撃ターン処理
   useEffect(() => {
-    if (currentPlayer?.type === 'ai' && !isAttackOngoing && phase === 'in-game') {
-      handleAIAttack();
+    const handleAiTurn = async () => {
+      // ゲームが進行中でない、または勝者が決定済み、または攻撃中の場合は何もしない
+      if (phase !== "in-game" || winnerId !== null || isAttackOngoing) {
+        return;
+      }
+      // 現在のプレイヤーがAIでなければ何もしない
+      if (currentPlayer?.type !== "ai") {
+        return;
+      }
+
+      setIsAttackOngoing(true); // AI攻撃開始フラグを立てる
+
+      setMessage(`AI (${currentPlayer.name}) のターンです...`);
+      await new Promise((resolve) => setTimeout(resolve, 1500)); // AI思考時間
+
+      const currentOpponentBoard =
+        gameStateRef.current.playerBoards[opponentPlayer!.id]; // ! で undefined でないことを保証
+      const currentAttackerBoard =
+        gameStateRef.current.playerBoards[currentPlayer!.id];
+
+      const sunkShips = currentOpponentBoard.placedShips.filter(
+        (ship) => ship.isSunk
+      );
+      const remainingShipDefinitions = ALL_SHIPS.filter(
+        (shipDef) =>
+          !sunkShips.some((sunkShip) => sunkShip.definition.id === shipDef.id)
+      );
+
+      const attackCoord = getAiAttackCoordinate(
+        currentPlayer!.difficulty || "easy",
+        currentOpponentBoard,
+        sunkShips,
+        remainingShipDefinitions
+      );
+
+      setMessage(
+        `AI (${currentPlayer.name}) が ${String.fromCharCode(
+          65 + attackCoord.x
+        )}${attackCoord.y + 1} へ攻撃！`
+      );
+      await new Promise((resolve) => setTimeout(resolve, 1000)); // 攻撃アニメーションの待機
+
+      const result = handleAttack(
+        currentPlayer!.id,
+        opponentPlayer!.id,
+        attackCoord
+      );
+
+      if (result.hit) {
+        setMessage(
+          `AI (${currentPlayer.name}) がヒット！ ${
+            result.sunkShipId
+              ? ALL_SHIPS.find((s) => s.id === result.sunkShipId)?.name +
+                " を撃沈！"
+              : ""
+          }`
+        );
+      } else {
+        setMessage(`AI (${currentPlayer.name}) がミス！`);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 1000)); // 結果表示のための待機
+
+      setIsAttackOngoing(false); // AI攻撃終了
+      // AI攻撃が完了し、勝者がまだ決まっていない場合のみターンを進める
+      if (gameStateRef.current.winnerId === null) {
+        advanceTurn(); // ターンを進める
+      }
+    };
+
+    // AIのターンになったら、AIの攻撃処理を開始
+    // isAttackOngoing が false の場合のみ実行し、連続攻撃を防ぐ
+    if (
+      phase === "in-game" &&
+      currentPlayer?.type === "ai" &&
+      !isAttackOngoing
+    ) {
+      handleAiTurn();
     }
-  }, [currentPlayer, isAttackOngoing, phase, handleAIAttack]); // 依存配列に isAttackOngoing を含める
+  }, [
+    currentPlayer,
+    opponentPlayer,
+    handleAttack,
+    phase,
+    isAttackOngoing,
+    getAiAttackCoordinate,
+    winnerId,
+    advanceTurn,
+  ]);
 
-
-  // ★重要★ ロード中の表示やデータの存在チェックを強化
-  // これらのデータが全て揃ってからレンダリングを開始する
-  if (!myBoard || !opponentBoard || !currentPlayer || phase !== 'in-game') {
-    // 進行中のフェーズでない場合もここで待機
-    console.log("GameScreen: Waiting for all data to be ready or phase to be in-game.", { myBoard, opponentBoard, currentPlayer, phase });
+  if (!myBoard || !opponentBoard || !currentPlayer || phase !== "in-game") {
     return <div>ゲームボードを準備中...</div>;
   }
 
   return (
-    <div style={{ maxWidth: '900px', margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-      <h3 style={{ textAlign: 'center' }}>現在のターン: {currentPlayer?.name}</h3>
+    <div
+      style={{
+        maxWidth: "900px",
+        margin: "0 auto",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+      }}
+    >
+      <h3 style={{ textAlign: "center" }}>
+        現在のターン: {currentPlayer?.name}
+      </h3>
 
       {message && (
-        <p style={{ color: 'yellow', fontWeight: 'bold' }}>{message}</p>
+        <p style={{ color: "yellow", fontWeight: "bold" }}>{message}</p>
       )}
 
-      <div style={{ display: 'flex', justifyContent: 'space-around', width: '100%', gap: '20px', flexWrap: 'wrap' }}>
-        <div style={{ textAlign: 'center', marginBottom: '20px' }}>
-          <h4>あなたのボード ({myBoard.playerId === currentPlayerTurnId ? 'ターン' : '待機中'})</h4>
-          {/* 自分のボードはisPlayerBoard={true}で船を表示 */}
-          <BoardGrid cells={myDisplayCells} isPlayerBoard={true} disableClick={true} />
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-around",
+          width: "100%",
+          gap: "20px",
+          flexWrap: "wrap",
+        }}
+      >
+        <div style={{ textAlign: "center", marginBottom: "20px" }}>
+          <h4>
+            あなたのボード (
+            {myBoard.playerId === currentPlayerTurnId ? "ターン" : "待機中"})
+          </h4>
+          <BoardGrid cells={myDisplayCells} isPlayerBoard={true} />
         </div>
 
-        <div style={{ textAlign: 'center', marginBottom: '20px' }}>
-          <h4>{opponentPlayer?.name} のボード ({opponentPlayer?.id === currentPlayerTurnId ? 'ターン' : '待機中'})</h4>
-          {/* 相手のボードはisPlayerBoard={false}で船を非表示、クリック可能（人間プレイヤーの場合のみ） */}
+        <div style={{ textAlign: "center", marginBottom: "20px" }}>
+          <h4>
+            {opponentPlayer?.name} のボード (
+            {opponentPlayer?.id === currentPlayerTurnId ? "ターン" : "待機中"})
+          </h4>
           <BoardGrid
             cells={opponentDisplayCells}
             isPlayerBoard={false}
-            onCellClick={currentPlayer?.type === 'human' ? handleHumanAttack : undefined}
-            disableClick={currentPlayer?.type !== 'human' || isAttackOngoing} // AIのターン中または攻撃中はクリック不可
+            onCellClick={handleCellClick}
+            disableClick={
+              currentPlayer?.type === "ai" ||
+              isAttackOngoing ||
+              winnerId !== null
+            } // AIのターン中、攻撃中、またはゲーム終了時はクリック無効
           />
         </div>
       </div>

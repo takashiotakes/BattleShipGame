@@ -24,6 +24,11 @@ export const useAiAttackLogic = (): AiAttackLogic => {
         }
       }
     }
+    if (availableCells.length === 0) {
+      // 全てのマスが攻撃済みの場合（デバッグ用）
+      // このケースは本来到達しないはずだが、念のため無限ループを避ける
+      return { x: 0, y: 0 };
+    }
     const randomIndex = Math.floor(Math.random() * availableCells.length);
     return availableCells[randomIndex];
   }, []);
@@ -31,190 +36,202 @@ export const useAiAttackLogic = (): AiAttackLogic => {
   // NormalモードのAIロジック
   const getNormalAttack = useCallback((opponentBoard: PlayerBoard): Coordinate => {
     // 1. ヒットした船の周囲を探す (船が沈んでいない場合)
+    const hitCells: Coordinate[] = [];
     for (let r = 0; r < 10; r++) {
       for (let c = 0; c < 10; c++) {
-        if (opponentBoard.cells[r][c].status === 'hit') {
-          // ヒットしたマスの周囲4方向をチェック
-          const neighbors: Coordinate[] = [
-            { x: c, y: r - 1 }, // 上
-            { x: c, y: r + 1 }, // 下
-            { x: c - 1, y: r }, // 左
-            { x: c + 1, y: r }, // 右
-          ];
-
-          // まだ攻撃していない隣接セルがあれば、そこを優先
-          for (const neighbor of neighbors) {
-            if (
-              neighbor.y >= 0 && neighbor.y < 10 &&
-              neighbor.x >= 0 && neighbor.x < 10 &&
-              (opponentBoard.cells[neighbor.y][neighbor.x].status === 'empty' ||
-               opponentBoard.cells[neighbor.y][neighbor.x].status === 'ship')
-            ) {
-              return neighbor;
-            }
+        if (opponentBoard.cells[r][c].status === 'hit' && opponentBoard.cells[r][c].shipId) {
+          const ship = opponentBoard.placedShips.find(s => s.id === opponentBoard.cells[r][c].shipId);
+          if (ship && !ship.isSunk) {
+            hitCells.push({ x: c, y: r });
           }
         }
       }
     }
 
-    // 2. ヒットしているマスがない場合、または周囲がすべて攻撃済みの場合は、市松模様（チェッカーボード）で攻撃
-    // これにより、効率的に船を発見しやすくなる
-    const availableCheckerboardCells: Coordinate[] = [];
+    if (hitCells.length > 0) {
+      // ヒットしたマスの周囲（上下左右）を優先的に攻撃
+      const targetCandidates: Coordinate[] = [];
+      hitCells.forEach(hitCoord => {
+        const potentialTargets = [
+          { x: hitCoord.x + 1, y: hitCoord.y },
+          { x: hitCoord.x - 1, y: hitCoord.y },
+          { x: hitCoord.x, y: hitCoord.y + 1 },
+          { x: hitCoord.x, y: hitCoord.y - 1 },
+        ];
+        potentialTargets.forEach(p => {
+          if (p.x >= 0 && p.x < 10 && p.y >= 0 && p.y < 10) {
+            const status = opponentBoard.cells[p.y][p.x].status;
+            if (status === 'empty' || status === 'ship') {
+              targetCandidates.push(p);
+            }
+          }
+        });
+      });
+
+      if (targetCandidates.length > 0) {
+        // 重複を削除してランダムに選択
+        const uniqueCandidates = Array.from(new Set(targetCandidates.map(c => `${c.x},${c.y}`)))
+                                    .map(s => { const [x, y] = s.split(',').map(Number); return { x, y }; });
+        return uniqueCandidates[Math.floor(Math.random() * uniqueCandidates.length)];
+      }
+    }
+
+    // 2. ヒットしたマスがない場合、または周囲に攻撃可能なマスがない場合、ランダムに奇数/偶数マスを攻撃 (Normalモードの特徴)
+    const availableOddEvenCells: Coordinate[] = [];
     for (let r = 0; r < 10; r++) {
       for (let c = 0; c < 10; c++) {
-        // (行 + 列) が偶数のマスのみを対象にする (市松模様)
-        if ((r + c) % 2 === 0 &&
-            (opponentBoard.cells[r][c].status === 'empty' ||
-             opponentBoard.cells[r][c].status === 'ship')) {
-          availableCheckerboardCells.push({ x: c, y: r });
+        const cellStatus = opponentBoard.cells[r][c].status;
+        // (r + c) % 2 === 0 は市松模様の攻撃パターン
+        if ((r + c) % 2 === 0 && (cellStatus === 'empty' || cellStatus === 'ship')) {
+          availableOddEvenCells.push({ x: c, y: r });
         }
       }
     }
 
-    if (availableCheckerboardCells.length > 0) {
-      const randomIndex = Math.floor(Math.random() * availableCheckerboardCells.length);
-      return availableCheckerboardCells[randomIndex];
+    if (availableOddEvenCells.length > 0) {
+      return availableOddEvenCells[Math.floor(Math.random() * availableOddEvenCells.length)];
     }
 
-    // 3. 市松模様のマスが全て攻撃済みの場合、残りの未攻撃マスからランダムに選択（最終手段）
-    return getEasyAttack(opponentBoard); // Easyモードと同じロジックで残りを攻撃
+    // 奇数/偶数マスも全て埋まっている場合、Easyモードと同じランダム攻撃
+    return getEasyAttack(opponentBoard);
   }, [getEasyAttack]);
 
-  // HardモードのAIロジック (Normalモードをベースに拡張)
+  // HardモードのAIロジック
   const getHardAttack = useCallback((
     opponentBoard: PlayerBoard,
     sunkShips: PlacedShip[],
     remainingShipDefinitions: ShipDefinition[]
   ): Coordinate => {
-    // 1. ヒットした船の周囲を探す (Normalと同じく優先)
+    const probabilities: { [key: string]: number } = {};
     for (let r = 0; r < 10; r++) {
       for (let c = 0; c < 10; c++) {
-        if (opponentBoard.cells[r][c].status === 'hit') {
-          const hitShipId = opponentBoard.cells[r][c].shipId;
-          const placedShip = opponentBoard.placedShips.find(s => s.id === hitShipId);
+        probabilities[`${c},${r}`] = 0;
+      }
+    }
 
-          // 既に沈んでいる船のIDと一致する場合はスキップ（念のため）
-          if (placedShip && placedShip.isSunk) continue;
-
-          // ヒットしたマスの周囲4方向をチェック
-          const neighbors: Coordinate[] = [
-            { x: c, y: r - 1 }, // 上
-            { x: c, y: r + 1 }, // 下
-            { x: c - 1, y: r }, // 左
-            { x: c + 1, y: r }, // 右
-          ];
-
-          // まだ攻撃していない隣接セルがあれば、そこを優先
-          // 特に、もし複数のヒットがある場合は、それらのヒットが一直線になるように攻撃を試みる
-          const hitsForThisShip = placedShip ? placedShip.hits : [];
-          if (hitsForThisShip.length > 1) { // 既に2つ以上のヒットがある場合、船の方向が判明している可能性
-            const firstHit = hitsForThisShip[0];
-            const secondHit = hitsForThisShip[1];
-            const isHorizontal = firstHit.y === secondHit.y;
-            const isVertical = firstHit.x === secondHit.x;
-
-            if (isHorizontal) { // 横方向の船
-              const minX = Math.min(...hitsForThisShip.map(h => h.x));
-              const maxX = Math.max(...hitsForThisShip.map(h => h.x));
-              // 左隣と右隣を優先
-              const potentialTargets: Coordinate[] = [
-                { x: minX - 1, y: firstHit.y },
-                { x: maxX + 1, y: firstHit.y }
-              ];
-              for (const target of potentialTargets) {
-                if (
-                  target.y >= 0 && target.y < 10 &&
-                  target.x >= 0 && target.x < 10 &&
-                  (opponentBoard.cells[target.y][target.x].status === 'empty' ||
-                   opponentBoard.cells[target.y][target.x].status === 'ship')
-                ) {
-                  return target;
-                }
-              }
-            } else if (isVertical) { // 縦方向の船
-              const minY = Math.min(...hitsForThisShip.map(h => h.y));
-              const maxY = Math.max(...hitsForThisShip.map(h => h.y));
-              // 上隣と下隣を優先
-              const potentialTargets: Coordinate[] = [
-                { x: firstHit.x, y: minY - 1 },
-                { x: firstHit.x, y: maxY + 1 }
-              ];
-              for (const target of potentialTargets) {
-                if (
-                  target.y >= 0 && target.y < 10 &&
-                  target.x >= 0 && target.x < 10 &&
-                  (opponentBoard.cells[target.y][target.x].status === 'empty' ||
-                   opponentBoard.cells[target.y][target.x].status === 'ship')
-                ) {
-                  return target;
-                }
-              }
-            }
-          }
-
-          // 船の方向が不明な場合、または直線攻撃でヒットしなかった場合、Normalと同じ周囲攻撃
-          for (const neighbor of neighbors) {
-            if (
-              neighbor.y >= 0 && neighbor.y < 10 &&
-              neighbor.x >= 0 && neighbor.x < 10 &&
-              (opponentBoard.cells[neighbor.y][neighbor.x].status === 'empty' ||
-               opponentBoard.cells[neighbor.y][neighbor.x].status === 'ship')
-            ) {
-              return neighbor;
-            }
+    // 1. ヒットした船の周囲を探す (Normalモードと同様のロジックをより強化)
+    const hitCells: Coordinate[] = [];
+    for (let r = 0; r < 10; r++) {
+      for (let c = 0; c < 10; c++) {
+        if (opponentBoard.cells[r][c].status === 'hit' && opponentBoard.cells[r][c].shipId) {
+          const ship = opponentBoard.placedShips.find(s => s.id === opponentBoard.cells[r][c].shipId);
+          if (ship && !ship.isSunk) {
+            hitCells.push({ x: c, y: r });
           }
         }
       }
     }
 
-    // 2. ヒットしているマスがない場合、または周囲が全て攻撃済みの場合は、確率論に基づいた攻撃
-    // 未攻撃のマスそれぞれについて、まだ沈んでいない各船がそこに配置されうる確率を計算する
-    const probabilities: { [key: string]: number } = {}; // "y,x" -> 確率値
+    if (hitCells.length > 0) {
+      // 複数のヒット箇所がある場合、船の方向を推測し、その方向を優先的に攻撃
+      const targetCandidates: Coordinate[] = [];
+      const potentialDirections: { [key: string]: boolean } = {}; // 'horizontal' or 'vertical'
 
-    const BOARD_SIZE = 10;
+      // ヒットしたセルのペアから方向を推測
+      if (hitCells.length >= 2) {
+        // x座標が同じでy座標が異なる -> 垂直方向の船
+        const isVertical = hitCells.every(coord => coord.x === hitCells[0].x);
+        // y座標が同じでx座標が異なる -> 水平方向の船
+        const isHorizontal = hitCells.every(coord => coord.y === hitCells[0].y);
 
-    // 各マスを初期化
-    for (let r = 0; r < BOARD_SIZE; r++) {
-      for (let c = 0; c < BOARD_SIZE; c++) {
-        probabilities[`${r},${c}`] = 0;
+        if (isVertical) potentialDirections.vertical = true;
+        if (isHorizontal) potentialDirections.horizontal = true;
+
+        if (isVertical || isHorizontal) { // 方向が特定できた場合
+            const minX = Math.min(...hitCells.map(c => c.x));
+            const maxX = Math.max(...hitCells.map(c => c.x));
+            const minY = Math.min(...hitCells.map(c => c.y));
+            const maxY = Math.max(...hitCells.map(c => c.y));
+
+            for (const hitCoord of hitCells) {
+                // 特定された方向で次の攻撃候補を探す
+                if (potentialDirections.vertical) {
+                    // 上方向
+                    if (hitCoord.y - 1 >= 0 && (opponentBoard.cells[hitCoord.y - 1][hitCoord.x].status === 'empty' || opponentBoard.cells[hitCoord.y - 1][hitCoord.x].status === 'ship')) {
+                        targetCandidates.push({ x: hitCoord.x, y: hitCoord.y - 1 });
+                    }
+                    // 下方向
+                    if (hitCoord.y + 1 < 10 && (opponentBoard.cells[hitCoord.y + 1][hitCoord.x].status === 'empty' || opponentBoard.cells[hitCoord.y + 1][hitCoord.x].status === 'ship')) {
+                        targetCandidates.push({ x: hitCoord.x, y: hitCoord.y + 1 });
+                    }
+                }
+                if (potentialDirections.horizontal) {
+                    // 左方向
+                    if (hitCoord.x - 1 >= 0 && (opponentBoard.cells[hitCoord.y][hitCoord.x - 1].status === 'empty' || opponentBoard.cells[hitCoord.y][hitCoord.x - 1].status === 'ship')) {
+                        targetCandidates.push({ x: hitCoord.x - 1, y: hitCoord.y });
+                    }
+                    // 右方向
+                    if (hitCoord.x + 1 < 10 && (opponentBoard.cells[hitCoord.y][hitCoord.x + 1].status === 'empty' || opponentBoard.cells[hitCoord.y][hitCoord.x + 1].status === 'ship')) {
+                        targetCandidates.push({ x: hitCoord.x + 1, y: hitCoord.y });
+                    }
+                }
+            }
+        }
+      }
+
+      // 方向が特定できない場合や単一ヒットの場合、全方向をチェック
+      if (targetCandidates.length === 0) {
+          hitCells.forEach(hitCoord => {
+            const potentialTargets = [
+              { x: hitCoord.x + 1, y: hitCoord.y },
+              { x: hitCoord.x - 1, y: hitCoord.y },
+              { x: hitCoord.x, y: hitCoord.y + 1 },
+              { x: hitCoord.x, y: hitCoord.y - 1 },
+            ];
+            potentialTargets.forEach(p => {
+              if (p.x >= 0 && p.x < 10 && p.y >= 0 && p.y < 10) {
+                const status = opponentBoard.cells[p.y][p.x].status;
+                if (status === 'empty' || status === 'ship') {
+                  targetCandidates.push(p);
+                }
+              }
+            });
+          });
+      }
+
+      if (targetCandidates.length > 0) {
+        const uniqueCandidates = Array.from(new Set(targetCandidates.map(c => `${c.x},${c.y}`)))
+                                    .map(s => { const [x, y] = s.split(',').map(Number); return { x, y }; });
+        return uniqueCandidates[Math.floor(Math.random() * uniqueCandidates.length)];
       }
     }
 
-    // まだ見つかっていない船について、考えられるすべての配置パターンを試す
+
+    // 2. まだ沈んでいない船の定義と、攻撃されていないマスから、各マスに船が存在する確率を計算
     remainingShipDefinitions.forEach(shipDef => {
-      for (let r = 0; r < BOARD_SIZE; r++) {
-        for (let c = 0; c < BOARD_SIZE; c++) {
-          // 横方向
-          if (c + shipDef.size <= BOARD_SIZE) {
-            let isValidPlacement = true;
-            for (let i = 0; i < shipDef.size; i++) {
-              const cell = opponentBoard.cells[r][c + i];
-              if (cell.status === 'hit' || cell.status === 'miss' || cell.status === 'sunk') {
-                // 攻撃済みのマスや沈んだ船の一部がある場合は配置不可
-                isValidPlacement = false;
-                break;
-              }
-            }
-            if (isValidPlacement) {
-              for (let i = 0; i < shipDef.size; i++) {
-                probabilities[`${r},${c + i}`]++;
-              }
+      // 水平方向の配置を試行
+      for (let r = 0; r < 10; r++) {
+        for (let c = 0; c <= 10 - shipDef.size; c++) {
+          let canPlace = true;
+          for (let i = 0; i < shipDef.size; i++) {
+            const cellStatus = opponentBoard.cells[r][c + i].status;
+            if (cellStatus === 'hit' || cellStatus === 'miss' || cellStatus === 'sunk') {
+              canPlace = false;
+              break;
             }
           }
-          // 縦方向
-          if (r + shipDef.size <= BOARD_SIZE) {
-            let isValidPlacement = true;
+          if (canPlace) {
             for (let i = 0; i < shipDef.size; i++) {
-              const cell = opponentBoard.cells[r + i][c];
-              if (cell.status === 'hit' || cell.status === 'miss' || cell.status === 'sunk') {
-                isValidPlacement = false;
-                break;
-              }
+              probabilities[`${c + i},${r}`]++;
             }
-            if (isValidPlacement) {
-              for (let i = 0; i < shipDef.size; i++) {
-                probabilities[`${r + i},${c}`]++;
-              }
+          }
+        }
+      }
+
+      // 垂直方向の配置を試行
+      for (let c = 0; c < 10; c++) {
+        for (let r = 0; r <= 10 - shipDef.size; r++) {
+          let canPlace = true;
+          for (let i = 0; i < shipDef.size; i++) {
+            const cellStatus = opponentBoard.cells[r + i][c].status;
+            if (cellStatus === 'hit' || cellStatus === 'miss' || cellStatus === 'sunk') {
+              canPlace = false;
+              break;
+            }
+          }
+          if (canPlace) {
+            for (let i = 0; i < shipDef.size; i++) {
+              probabilities[`${c},${r + i}`]++;
             }
           }
         }
@@ -224,9 +241,9 @@ export const useAiAttackLogic = (): AiAttackLogic => {
     let maxProbability = -1;
     let bestCandidates: Coordinate[] = [];
 
-    for (let r = 0; r < BOARD_SIZE; r++) {
-      for (let c = 0; c < BOARD_SIZE; c++) {
-        const coordKey = `${r},${c}`;
+    for (let r = 0; r < 10; r++) {
+      for (let c = 0; c < 10; c++) {
+        const coordKey = `${c},${r}`; // x,y の順
         const currentProbability = probabilities[coordKey];
         const cellStatus = opponentBoard.cells[r][c].status;
 
