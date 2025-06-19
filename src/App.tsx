@@ -50,19 +50,17 @@ const AppContent: React.FC = () => {
           ) : (
             <p>引き分け！</p>
           )}
-          <button onClick={() => window.location.reload()}>もう一度プレイ</button> {/* 簡易リセット */}
+          <button onClick={resetGame}>もう一度プレイ</button>
         </div>
       )}
     </div>
   );
 };
 
-const App: React.FC = () => {
-  return (
-    <GameProvider>
-      <AppContent />
-    </GameProvider>
-  );
-};
+const App: React.FC = () => (
+  <GameProvider>
+    <AppContent />
+  </GameProvider>
+);
 
 export default App;
