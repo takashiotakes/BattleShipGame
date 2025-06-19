@@ -3,13 +3,14 @@
 import React, { useMemo, useCallback, useEffect, useState, useRef } from 'react';
 import { useGame } from '../contexts/GameContext';
 import BoardGrid from './BoardGrid';
-import { updateCellsWithShips, createEmptyBoard } from '../lib/boardUtils';
+import { createEmptyBoard } from '../lib/boardUtils';
 import { PlayerBoard, AttackResult, Coordinate, PlayerSettings } from '../models/types';
 
 const GameScreen: React.FC = () => {
-  const { gameState, advanceTurn, handleAttack, setGameState } = useGame();
+  const { gameState, advanceTurn, handleAttack } = useGame(); // setGameState は handleCellClick では直接使わない
   const { players, playerBoards, currentPlayerTurnId, phase } = gameState;
 
+  // gameStateRef は handleAttack や handleAIAttack 内で最新の gameState を参照するために残す
   const gameStateRef = useRef(gameState);
   useEffect(() => {
     gameStateRef.current = gameState;
@@ -18,30 +19,27 @@ const GameScreen: React.FC = () => {
   const [message, setMessage] = useState<string | null>(null);
   const [isAttackOngoing, setIsAttackOngoing] = useState<boolean>(false);
   const [aiAttackTargetCoord, setAiAttackTargetCoord] = useState<Coordinate | null>(null);
+  const [aiAttackHighlightTargetPlayerId, setAiAttackHighlightTargetPlayerId] = useState<number | null>(null);
   const [humanAttackTargetPlayerId, setHumanAttackTargetPlayerId] = useState<number | null>(null); // 人間プレイヤーが攻撃対象に選んだ相手のID
 
   const currentPlayer = useMemo(() => players.find(p => p.id === currentPlayerTurnId), [players, currentPlayerTurnId]);
 
   const myBoard = useMemo(() => playerBoards[currentPlayerTurnId], [playerBoards, currentPlayerTurnId]);
 
-  // ★変更点1: 攻撃可能な全ての敵プレイヤーのリストを取得する★
+  const myDisplayCells = useMemo(() => {
+    if (!myBoard) return createEmptyBoard(currentPlayerTurnId).cells;
+    return myBoard.cells;
+  }, [myBoard, currentPlayerTurnId]);
+
+  // 攻撃可能な全ての敵プレイヤーのリストを取得する
   const enemyPlayers = useMemo(() => {
     return players.filter(p => p.id !== currentPlayerTurnId && p.type !== 'none');
   }, [players, currentPlayerTurnId]);
 
-  const myDisplayCells = useMemo(() => {
-    if (!myBoard) return createEmptyBoard(currentPlayerTurnId).cells;
-    return updateCellsWithShips(currentPlayerTurnId, myBoard.placedShips);
-  }, [myBoard, currentPlayerTurnId]);
-
-
-  // ★変更点2: handleCellClick の引数に targetPlayerId を追加★
+  // handleCellClick の引数に targetPlayerId を追加
   const handleCellClick = useCallback(
     async (targetPlayerId: number, coord: Coordinate) => {
-      // isAttackOngoing が true の場合はクリックを無効にする
       if (!currentPlayer || currentPlayer.type !== 'human' || isAttackOngoing) return;
-
-      // クリックされたのが自分自身のボードの場合も攻撃しない
       if (targetPlayerId === currentPlayer.id) return;
 
       const targetOpponent = players.find(p => p.id === targetPlayerId);
@@ -53,15 +51,15 @@ const GameScreen: React.FC = () => {
       setMessage(null);
       setIsAttackOngoing(true); // 攻撃中フラグを立てる
 
+      // handleAttack は同期的に AttackResult を返す
       const result = handleAttack(currentPlayer.id, targetPlayerId, coord);
 
-      // 攻撃結果メッセージ
+      // 攻撃結果メッセージを result を元に直接セット
       if (result.hit) {
-        setMessage('ヒット！');
-        const targetBoard = playerBoards[targetPlayerId];
         if (result.sunkShipId) {
-          const sunkShipName = targetBoard?.placedShips.find(s => s.id === result.sunkShipId)?.definition.name;
-          setMessage(`ヒット！ ${sunkShipName || '船'} を撃沈！`);
+          setMessage(`ヒット！ ${result.sunkShipName || '船'} を撃沈！`);
+        } else {
+          setMessage('ヒット！');
         }
       } else {
         setMessage('ミス！');
@@ -79,7 +77,7 @@ const GameScreen: React.FC = () => {
         advanceTurn(); // ターンを進める
       }, 1000); // 1秒待機
     },
-    [currentPlayer, isAttackOngoing, handleAttack, advanceTurn, players, playerBoards]
+    [currentPlayer, isAttackOngoing, handleAttack, advanceTurn, players]
   );
 
 
@@ -89,7 +87,6 @@ const GameScreen: React.FC = () => {
     setIsAttackOngoing(true);
     setMessage(`${currentPlayer.name} が攻撃中...`);
 
-    // ★変更点3: AIの攻撃対象をランダムに選択する★
     const currentEnemyPlayers = gameStateRef.current.players.filter(p =>
         p.id !== gameStateRef.current.currentPlayerTurnId &&
         p.type !== 'none'
@@ -98,11 +95,10 @@ const GameScreen: React.FC = () => {
     if (currentEnemyPlayers.length === 0) {
         console.warn("AI: No active enemy players to attack.");
         setIsAttackOngoing(false);
-        advanceTurn(); // 敵がいない場合はそのまま次のターンへ (ゲームオーバーになるはずだが念のため)
+        advanceTurn();
         return;
     }
 
-    // 生きている敵（全ての船が沈んでいない敵）の中からランダムに選択
     const livingEnemyPlayers = currentEnemyPlayers.filter(enemy => {
         const board = gameStateRef.current.playerBoards[enemy.id];
         return board && board.placedShips.some(ship => !ship.isSunk);
@@ -150,24 +146,25 @@ const GameScreen: React.FC = () => {
         return;
     }
 
-    setAiAttackTargetCoord(randomCoord); // AIの攻撃ターゲットをハイライト
+    setAiAttackTargetCoord(randomCoord); // AIの攻撃ターゲットセルをハイライト
+    setAiAttackHighlightTargetPlayerId(targetPlayerId); // AIの攻撃ターゲットプレイヤーをハイライト
     await new Promise(resolve => setTimeout(resolve, 1500)); // AIの攻撃アニメーションや思考時間
 
     const result = handleAttack(currentPlayer.id, targetPlayerId, randomCoord);
 
     // 攻撃結果メッセージ
     if (result.hit) {
-      setMessage(`AI (${currentPlayer.name}) の攻撃: ヒット！`);
-      const opponentBoardForMsg = gameStateRef.current.playerBoards[targetPlayerId];
       if (result.sunkShipId) {
-        const sunkShipName = opponentBoardForMsg?.placedShips.find(s => s.id === result.sunkShipId)?.definition.name;
-        setMessage(`AI (${currentPlayer.name}) の攻撃: ヒット！ ${sunkShipName || '船'} を撃沈！`);
+        setMessage(`AI (${currentPlayer.name}) の攻撃: ヒット！ ${result.sunkShipName || '船'} を撃沈！`);
+      } else {
+        setMessage(`AI (${currentPlayer.name}) の攻撃: ヒット！`);
       }
     } else {
       setMessage(`AI (${currentPlayer.name}) の攻撃: ミス！`);
     }
 
     setAiAttackTargetCoord(null); // ハイライトを解除
+    setAiAttackHighlightTargetPlayerId(null); // ハイライトを解除
 
     if (result.winnerId !== undefined && result.winnerId !== null) {
         console.log(`Winner detected: Player ${result.winnerId}`);
@@ -194,13 +191,11 @@ const GameScreen: React.FC = () => {
 
 
   // ロード中の表示やデータの存在チェックを強化
-  // currentPlayer と myBoard は必須
   if (!myBoard || !currentPlayer || phase !== 'in-game') {
     console.log("GameScreen: Waiting for essential data or phase to be in-game.", { myBoard, currentPlayer, phase });
     return <div>ゲームボードを準備中...</div>;
   }
 
-  // ★変更点4: 敵のボードのレンダリングをループに変更★
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
       <h3 style={{ textAlign: 'center' }}>現在のターン: {currentPlayer?.name}</h3>
@@ -219,9 +214,8 @@ const GameScreen: React.FC = () => {
         {/* 敵のボードを複数表示 */}
         {enemyPlayers.map(opponentPlayer => {
           const opponentBoard = playerBoards[opponentPlayer.id];
-          if (!opponentBoard) return null; // ボードがない場合はスキップ
+          if (!opponentBoard) return null;
 
-          // 全ての船が沈んでいる敵は表示しない、または沈没済みと表示する
           const isOpponentSunk = opponentBoard.placedShips.every(ship => ship.isSunk);
 
           return (
@@ -232,30 +226,22 @@ const GameScreen: React.FC = () => {
               </h4>
               <BoardGrid
                 cells={opponentBoard.cells}
-                isPlayerBoard={false} // 相手のボードは船が見えないように
-                onCellClick={(coord) => handleCellClick(opponentPlayer.id, coord)} // ★クリック時に相手のIDを渡す★
+                isPlayerBoard={false}
+                onCellClick={(coord) => handleCellClick(opponentPlayer.id, coord)}
                 onCellHover={coord => {
                   if (currentPlayer?.type === 'human' && !isAttackOngoing && !isOpponentSunk) {
-                    setHumanAttackTargetPlayerId(opponentPlayer.id); // ホバーしたボードのプレイヤーをターゲットとして記憶
+                    setHumanAttackTargetPlayerId(opponentPlayer.id);
                   }
                 }}
-                onBoardLeave={() => setHumanAttackTargetPlayerId(null)} // ボードから離れたらターゲットを解除
+                onBoardLeave={() => setHumanAttackTargetPlayerId(null)}
                 disableClick={
-                    currentPlayer?.type !== 'human' || // 人間プレイヤーでなければクリック無効
-                    isAttackOngoing || // 攻撃中であればクリック無効
-                    isOpponentSunk || // 相手が沈没済みであればクリック無効
-                    // humanAttackTargetPlayerId !== null && humanAttackTargetPlayerId !== opponentPlayer.id // 別のボードをターゲットしている間も無効
-                    // ↑このロジックはUIが複雑になるので一旦コメントアウト
-                    false // クリック可能
-                }
-                highlightAttackTarget={
-                    currentPlayer?.type === 'ai' &&
-                    opponentPlayer.id === (gameStateRef.current.players.find(p => p.id === gameStateRef.current.currentPlayerTurnId)?.type === 'ai' ? gameStateRef.current.players.filter(p => p.id !== gameStateRef.current.currentPlayerTurnId && p.type !== 'none').find(p => gameStateRef.current.playerBoards[p.id]?.placedShips.every(ship => !ship.isSunk)) : null)?.id // AIが攻撃対象としているボードをハイライト (これは複雑なので後回しか、BoardGridの引数にするべき)
-                    // ★暫定的な対応: AIのターゲットはBoardGrid側でハイライトされないため、ここでは無効★
+                    currentPlayer?.type !== 'human' ||
+                    isAttackOngoing ||
+                    isOpponentSunk
                 }
                 aiAttackHighlightCoord={
-                    currentPlayer?.type === 'ai' && opponentPlayer.id === gameStateRef.current.players.find(p => p.id === gameStateRef.current.currentPlayerTurnId)?.id // これはAI自身のボードなので不要
-                    ? aiAttackTargetCoord // AIのターゲットセルを渡す
+                    (aiAttackHighlightTargetPlayerId === opponentPlayer.id)
+                    ? aiAttackTargetCoord
                     : null
                 }
               />

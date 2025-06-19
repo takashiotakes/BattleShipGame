@@ -10,7 +10,7 @@ interface BoardGridProps {
   onCellHover?: (coord: Coordinate) => void;
   onBoardLeave?: () => void;
   disableClick?: boolean; // クリックを無効にするか
-  // ★追加: AI攻撃のターゲットをハイライトするための座標★
+  // ★変更: AI攻撃のターゲットをハイライトするための座標をnull許容型に★
   aiAttackHighlightCoord?: Coordinate | null;
 }
 
@@ -119,7 +119,6 @@ const BoardGrid: React.FC<BoardGridProps> = ({
                 onClick={() => handleCellClick(cell.x, cell.y)}
                 onMouseEnter={() => handleCellHover(cell.x, cell.y)}
               >
-                {/* 船の表示は isPlayerBoard が true の場合のみ */}
                 {/* テキスト表示は不要な場合が多いので削除 */}
               </td>
             ))}
