@@ -1,180 +1,276 @@
-// src/lib/boardUtils.ts
+// src/utils/useAiAttackLogic.tsx
+import { useCallback } from 'react';
+import { PlayerBoard, Coordinate, CellStatus, AIDifficulty, PlacedShip, ALL_SHIPS, ShipDefinition } from '../models/types';
 
-import {
-  Cell,
-  CellStatus,
-  Coordinate,
-  Orientation,
-  PlacedShip,
-  ShipDefinition,
-} from "../models/types";
-
-export function createEmptyBoard(playerId: number): {
-  playerId: number;
-  cells: Cell[][];
-} {
-  const cells: Cell[][] = [];
-  for (let y = 0; y < 10; y++) {
-    cells[y] = [];
-    for (let x = 0; x < 10; x++) {
-      cells[y][x] = { x, y, status: "empty" };
-    }
-  }
-  return { playerId, cells };
+interface AiAttackLogic {
+  getAiAttackCoordinate: (
+    difficulty: AIDifficulty,
+    opponentBoard: PlayerBoard,
+    sunkShips: PlacedShip[], // 撃沈された船のリスト
+    remainingShipDefinitions: ShipDefinition[] // まだ見つかっていない船の定義リスト
+  ) => Coordinate;
 }
 
-// 船がボードの範囲内に収まっているかチェック
-export function isShipWithinBounds(
-  start: Coordinate,
-  size: number,
-  orientation: Orientation
-): boolean {
-  if (orientation === "horizontal") {
-    return start.x + size <= 10;
-  } else {
-    return start.y + size <= 10;
-  }
-}
+export const useAiAttackLogic = (): AiAttackLogic => {
 
-// 船が他の船と衝突しないかチェック
-export function isShipPlacementValid(
-  boardCells: Cell[][], // このボードに対して配置可能かチェック
-  start: Coordinate,
-  size: number,
-  orientation: Orientation
-): boolean {
-  for (let i = 0; i < size; i++) {
-    const x = orientation === "horizontal" ? start.x + i : start.x;
-    const y = orientation === "vertical" ? start.y + i : start.y;
-
-    // 範囲外チェックと衝突チェック
-    if (
-      x < 0 ||
-      x >= 10 ||
-      y < 0 ||
-      y >= 10 ||
-      boardCells[y][x].status === "ship"
-    ) {
-      return false; // 範囲外または船と衝突
-    }
-  }
-  return true;
-}
-
-// ボードに船を配置し、新しいボードの状態を返す
-// これは一時的なボード状態をシミュレートするために使用
-export function placeShipOnBoard(
-  initialCells: Cell[][], // 元のボードの状態
-  shipDefinition: ShipDefinition,
-  start: Coordinate,
-  orientation: Orientation
-): Cell[][] {
-  const newCells = initialCells.map((row) => row.map((cell) => ({ ...cell }))); // ディープコピー
-  for (let i = 0; i < shipDefinition.size; i++) {
-    const x = orientation === "horizontal" ? start.x + i : start.x;
-    const y = orientation === "vertical" ? start.y + i : start.y;
-    newCells[y][x] = {
-      ...newCells[y][x],
-      status: "ship",
-      shipId: shipDefinition.id,
-    };
-  }
-  return newCells;
-}
-
-// 船が配置されたボードのセルを更新する（最終的な表示用）
-export function updateCellsWithShips(
-  cells: Cell[][],
-  placedShips: PlacedShip[]
-): Cell[][] {
-  const newCells = cells.map((row) =>
-    row.map((cell) => ({ ...cell, shipId: undefined }))
-  ); // shipId をリセット
-
-  placedShips.forEach((pShip) => {
-    for (let i = 0; i < pShip.definition.size; i++) {
-      const x =
-        pShip.orientation === "horizontal" ? pShip.start.x + i : pShip.start.x;
-      const y =
-        pShip.orientation === "vertical" ? pShip.start.y + i : pShip.start.y;
-
-      // 範囲チェック (念のため)
-      if (x >= 0 && x < 10 && y >= 0 && y < 10) {
-        // attackedCells の情報はここに反映されない。それは GameScreen で処理
-        // ただし、すでに hit や miss の状態であればそれを維持
-        if (
-          newCells[y][x].status === "hit" ||
-          newCells[y][x].status === "sunk"
-        ) {
-          newCells[y][x] = { ...newCells[y][x], shipId: pShip.id };
-        } else {
-          // 何もなければ船として表示
-          newCells[y][x] = {
-            ...newCells[y][x],
-            status: "ship",
-            shipId: pShip.id,
-          };
+  // EasyモードのAIロジック
+  const getEasyAttack = useCallback((opponentBoard: PlayerBoard): Coordinate => {
+    const availableCells: Coordinate[] = [];
+    for (let r = 0; r < 10; r++) {
+      for (let c = 0; c < 10; c++) {
+        const cellStatus = opponentBoard.cells[r][c].status;
+        if (cellStatus === 'empty' || cellStatus === 'ship') { // まだ攻撃していないマス
+          availableCells.push({ x: c, y: r });
         }
       }
     }
-  });
-  return newCells;
-}
+    const randomIndex = Math.floor(Math.random() * availableCells.length);
+    return availableCells[randomIndex];
+  }, []);
 
-// ランダムに船を配置するヘルパー関数
-export function generateRandomShipPlacement(
-  boardId: number,
-  shipDefinition: ShipDefinition,
-  existingPlacedShips: PlacedShip[] // これまでに配置済みの船
-): PlacedShip | null {
-  const orientations: Orientation[] = ["horizontal", "vertical"];
-  let attempts = 0;
-  const maxAttempts = 2000; // 無限ループ防止のため試行回数を増やす
+  // NormalモードのAIロジック
+  const getNormalAttack = useCallback((opponentBoard: PlayerBoard): Coordinate => {
+    // 1. ヒットした船の周囲を探す (船が沈んでいない場合)
+    for (let r = 0; r < 10; r++) {
+      for (let c = 0; c < 10; c++) {
+        if (opponentBoard.cells[r][c].status === 'hit') {
+          // ヒットしたマスの周囲4方向をチェック
+          const neighbors: Coordinate[] = [
+            { x: c, y: r - 1 }, // 上
+            { x: c, y: r + 1 }, // 下
+            { x: c - 1, y: r }, // 左
+            { x: c + 1, y: r }, // 右
+          ];
 
-  while (attempts < maxAttempts) {
-    const orientation =
-      orientations[Math.floor(Math.random() * orientations.length)];
-    const start: Coordinate = {
-      x: Math.floor(Math.random() * 10),
-      y: Math.floor(Math.random() * 10),
-    };
+          // まだ攻撃していない隣接セルがあれば、そこを優先
+          for (const neighbor of neighbors) {
+            if (
+              neighbor.y >= 0 && neighbor.y < 10 &&
+              neighbor.x >= 0 && neighbor.x < 10 &&
+              (opponentBoard.cells[neighbor.y][neighbor.x].status === 'empty' ||
+               opponentBoard.cells[neighbor.y][neighbor.x].status === 'ship')
+            ) {
+              return neighbor;
+            }
+          }
+        }
+      }
+    }
 
-    // 現在のボード状態をシミュレート（既存の船を仮配置）
-    let simulatedCells = createEmptyBoard(boardId).cells;
-    existingPlacedShips.forEach((pShip) => {
-      // 既存の船が全て有効な配置であると仮定して、シミュレートボードに配置
-      simulatedCells = placeShipOnBoard(
-        simulatedCells,
-        pShip.definition,
-        pShip.start,
-        pShip.orientation
-      );
+    // 2. ヒットしているマスがない場合、または周囲がすべて攻撃済みの場合は、市松模様（チェッカーボード）で攻撃
+    // これにより、効率的に船を発見しやすくなる
+    const availableCheckerboardCells: Coordinate[] = [];
+    for (let r = 0; r < 10; r++) {
+      for (let c = 0; c < 10; c++) {
+        // (行 + 列) が偶数のマスのみを対象にする (市松模様)
+        if ((r + c) % 2 === 0 &&
+            (opponentBoard.cells[r][c].status === 'empty' ||
+             opponentBoard.cells[r][c].status === 'ship')) {
+          availableCheckerboardCells.push({ x: c, y: r });
+        }
+      }
+    }
+
+    if (availableCheckerboardCells.length > 0) {
+      const randomIndex = Math.floor(Math.random() * availableCheckerboardCells.length);
+      return availableCheckerboardCells[randomIndex];
+    }
+
+    // 3. 市松模様のマスが全て攻撃済みの場合、残りの未攻撃マスからランダムに選択（最終手段）
+    return getEasyAttack(opponentBoard); // Easyモードと同じロジックで残りを攻撃
+  }, [getEasyAttack]);
+
+  // HardモードのAIロジック (Normalモードをベースに拡張)
+  const getHardAttack = useCallback((
+    opponentBoard: PlayerBoard,
+    sunkShips: PlacedShip[],
+    remainingShipDefinitions: ShipDefinition[]
+  ): Coordinate => {
+    // 1. ヒットした船の周囲を探す (Normalと同じく優先)
+    for (let r = 0; r < 10; r++) {
+      for (let c = 0; c < 10; c++) {
+        if (opponentBoard.cells[r][c].status === 'hit') {
+          const hitShipId = opponentBoard.cells[r][c].shipId;
+          const placedShip = opponentBoard.placedShips.find(s => s.id === hitShipId);
+
+          // 既に沈んでいる船のIDと一致する場合はスキップ（念のため）
+          if (placedShip && placedShip.isSunk) continue;
+
+          // ヒットしたマスの周囲4方向をチェック
+          const neighbors: Coordinate[] = [
+            { x: c, y: r - 1 }, // 上
+            { x: c, y: r + 1 }, // 下
+            { x: c - 1, y: r }, // 左
+            { x: c + 1, y: r }, // 右
+          ];
+
+          // まだ攻撃していない隣接セルがあれば、そこを優先
+          // 特に、もし複数のヒットがある場合は、それらのヒットが一直線になるように攻撃を試みる
+          const hitsForThisShip = placedShip ? placedShip.hits : [];
+          if (hitsForThisShip.length > 1) { // 既に2つ以上のヒットがある場合、船の方向が判明している可能性
+            const firstHit = hitsForThisShip[0];
+            const secondHit = hitsForThisShip[1];
+            const isHorizontal = firstHit.y === secondHit.y;
+            const isVertical = firstHit.x === secondHit.x;
+
+            if (isHorizontal) { // 横方向の船
+              const minX = Math.min(...hitsForThisShip.map(h => h.x));
+              const maxX = Math.max(...hitsForThisShip.map(h => h.x));
+              // 左隣と右隣を優先
+              const potentialTargets: Coordinate[] = [
+                { x: minX - 1, y: firstHit.y },
+                { x: maxX + 1, y: firstHit.y }
+              ];
+              for (const target of potentialTargets) {
+                if (
+                  target.y >= 0 && target.y < 10 &&
+                  target.x >= 0 && target.x < 10 &&
+                  (opponentBoard.cells[target.y][target.x].status === 'empty' ||
+                   opponentBoard.cells[target.y][target.x].status === 'ship')
+                ) {
+                  return target;
+                }
+              }
+            } else if (isVertical) { // 縦方向の船
+              const minY = Math.min(...hitsForThisShip.map(h => h.y));
+              const maxY = Math.max(...hitsForThisShip.map(h => h.y));
+              // 上隣と下隣を優先
+              const potentialTargets: Coordinate[] = [
+                { x: firstHit.x, y: minY - 1 },
+                { x: firstHit.x, y: maxY + 1 }
+              ];
+              for (const target of potentialTargets) {
+                if (
+                  target.y >= 0 && target.y < 10 &&
+                  target.x >= 0 && target.x < 10 &&
+                  (opponentBoard.cells[target.y][target.x].status === 'empty' ||
+                   opponentBoard.cells[target.y][target.x].status === 'ship')
+                ) {
+                  return target;
+                }
+              }
+            }
+          }
+
+          // 船の方向が不明な場合、または直線攻撃でヒットしなかった場合、Normalと同じ周囲攻撃
+          for (const neighbor of neighbors) {
+            if (
+              neighbor.y >= 0 && neighbor.y < 10 &&
+              neighbor.x >= 0 && neighbor.x < 10 &&
+              (opponentBoard.cells[neighbor.y][neighbor.x].status === 'empty' ||
+               opponentBoard.cells[neighbor.y][neighbor.x].status === 'ship')
+            ) {
+              return neighbor;
+            }
+          }
+        }
+      }
+    }
+
+    // 2. ヒットしているマスがない場合、または周囲が全て攻撃済みの場合は、確率論に基づいた攻撃
+    // 未攻撃のマスそれぞれについて、まだ沈んでいない各船がそこに配置されうる確率を計算する
+    const probabilities: { [key: string]: number } = {}; // "y,x" -> 確率値
+
+    const BOARD_SIZE = 10;
+
+    // 各マスを初期化
+    for (let r = 0; r < BOARD_SIZE; r++) {
+      for (let c = 0; c < BOARD_SIZE; c++) {
+        probabilities[`${r},${c}`] = 0;
+      }
+    }
+
+    // まだ見つかっていない船について、考えられるすべての配置パターンを試す
+    remainingShipDefinitions.forEach(shipDef => {
+      for (let r = 0; r < BOARD_SIZE; r++) {
+        for (let c = 0; c < BOARD_SIZE; c++) {
+          // 横方向
+          if (c + shipDef.size <= BOARD_SIZE) {
+            let isValidPlacement = true;
+            for (let i = 0; i < shipDef.size; i++) {
+              const cell = opponentBoard.cells[r][c + i];
+              if (cell.status === 'hit' || cell.status === 'miss' || cell.status === 'sunk') {
+                // 攻撃済みのマスや沈んだ船の一部がある場合は配置不可
+                isValidPlacement = false;
+                break;
+              }
+            }
+            if (isValidPlacement) {
+              for (let i = 0; i < shipDef.size; i++) {
+                probabilities[`${r},${c + i}`]++;
+              }
+            }
+          }
+          // 縦方向
+          if (r + shipDef.size <= BOARD_SIZE) {
+            let isValidPlacement = true;
+            for (let i = 0; i < shipDef.size; i++) {
+              const cell = opponentBoard.cells[r + i][c];
+              if (cell.status === 'hit' || cell.status === 'miss' || cell.status === 'sunk') {
+                isValidPlacement = false;
+                break;
+              }
+            }
+            if (isValidPlacement) {
+              for (let i = 0; i < shipDef.size; i++) {
+                probabilities[`${r + i},${c}`]++;
+              }
+            }
+          }
+        }
+      }
     });
 
-    // 新しい船の配置が既存の船と衝突しないか、ボード範囲内かチェック
-    if (
-      isShipWithinBounds(start, shipDefinition.size, orientation) &&
-      isShipPlacementValid(
-        simulatedCells,
-        start,
-        shipDefinition.size,
-        orientation
-      )
-    ) {
-      // simulatedCells を渡す
-      return {
-        id: shipDefinition.id,
-        definition: shipDefinition,
-        start: start,
-        orientation: orientation,
-        hits: [],
-        isSunk: false,
-      };
+    let maxProbability = -1;
+    let bestCandidates: Coordinate[] = [];
+
+    for (let r = 0; r < BOARD_SIZE; r++) {
+      for (let c = 0; c < BOARD_SIZE; c++) {
+        const coordKey = `${r},${c}`;
+        const currentProbability = probabilities[coordKey];
+        const cellStatus = opponentBoard.cells[r][c].status;
+
+        // 既に攻撃済みのマスは対象外
+        if (cellStatus === 'hit' || cellStatus === 'miss' || cellStatus === 'sunk') {
+          continue;
+        }
+
+        if (currentProbability > maxProbability) {
+          maxProbability = currentProbability;
+          bestCandidates = [{ x: c, y: r }];
+        } else if (currentProbability === maxProbability) {
+          bestCandidates.push({ x: c, y: r });
+        }
+      }
     }
-    attempts++;
-  }
-  console.warn(
-    `Could not find a valid placement for ship ${shipDefinition.id} after ${maxAttempts} attempts.`
-  );
-  return null; // 有効な配置が見つからなかった場合
-}
+
+    if (bestCandidates.length > 0) {
+      // 確率が最も高いマスが複数ある場合、ランダムに選択
+      return bestCandidates[Math.floor(Math.random() * bestCandidates.length)];
+    }
+
+    // 3. 確率計算でも候補が見つからない場合（ほぼ発生しないはずだが念のため）、Easyモードと同じランダム攻撃
+    return getEasyAttack(opponentBoard);
+
+  }, [getEasyAttack]);
+
+
+  const getAiAttackCoordinate = useCallback((
+    difficulty: AIDifficulty,
+    opponentBoard: PlayerBoard,
+    sunkShips: PlacedShip[],
+    remainingShipDefinitions: ShipDefinition[]
+  ): Coordinate => {
+    if (difficulty === 'easy') {
+      return getEasyAttack(opponentBoard);
+    } else if (difficulty === 'normal') {
+      return getNormalAttack(opponentBoard);
+    } else if (difficulty === 'hard') {
+      return getHardAttack(opponentBoard, sunkShips, remainingShipDefinitions);
+    }
+    // デフォルトはEasy
+    return getEasyAttack(opponentBoard);
+  }, [getEasyAttack, getNormalAttack, getHardAttack]);
+
+  return { getAiAttackCoordinate };
+};

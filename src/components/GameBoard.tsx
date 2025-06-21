@@ -1,5 +1,5 @@
-import React from 'react';
-import { CellState, Coordinate, Player } from '../types';
+import React from "react";
+import { CellState, Coordinate, Player } from "../types";
 
 type GameBoardProps = {
   player: Player;
@@ -7,7 +7,7 @@ type GameBoardProps = {
   onAttack: (targetPlayerId: number, coord: Coordinate) => void;
 };
 
-const letters = 'ABCDEFGHIJ'.split('');
+const letters = "ABCDEFGHIJ".split("");
 
 const GameBoard: React.FC<GameBoardProps> = ({
   player,
@@ -23,9 +23,9 @@ const GameBoard: React.FC<GameBoardProps> = ({
   };
 
   return (
-    <div style={{ margin: '10px' }}>
+    <div style={{ margin: "10px" }}>
       <h3>Player {player.id + 1} のボード</h3>
-      <table style={{ borderCollapse: 'collapse' }}>
+      <table style={{ borderCollapse: "collapse" }}>
         <thead>
           <tr>
             <th></th>
@@ -39,28 +39,30 @@ const GameBoard: React.FC<GameBoardProps> = ({
             <tr key={rIdx}>
               <th>{rIdx + 1}</th>
               {row.map((cell, cIdx) => {
-                let display = '';
-                let color = '#ADD8E6';
-                if (cell === 'hit') {
-                  display = '💥';
-                  color = '#ff4444';
-                } else if (cell === 'miss') {
-                  display = '・';
-                  color = '#ccc';
+                let display = "";
+                let color = "#ADD8E6";
+                if (cell === "hit") {
+                  display = "💥";
+                  color = "#ff4444";
+                } else if (cell === "miss") {
+                  display = "・";
+                  color = "#ccc";
                 }
 
                 return (
                   <td
                     key={cIdx}
-                    onClick={() => !isCurrentPlayer && handleCellClick(rIdx, cIdx)}
+                    onClick={() =>
+                      !isCurrentPlayer && handleCellClick(rIdx, cIdx)
+                    }
                     style={{
                       width: 30,
                       height: 30,
-                      textAlign: 'center',
+                      textAlign: "center",
                       backgroundColor: color,
-                      border: '1px solid #333',
-                      cursor: !isCurrentPlayer ? 'pointer' : 'default',
-                      userSelect: 'none',
+                      border: "1px solid #333",
+                      cursor: !isCurrentPlayer ? "pointer" : "default",
+                      userSelect: "none",
                     }}
                   >
                     {display}
