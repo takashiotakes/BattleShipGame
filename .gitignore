@@ -22,3 +22,14 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+##
+src/vite-env.d.ts
+.eslintrc.cjs
+LICENSE
+packapckage-lock.json
+packapckage.json
+pnpm-lock.yaml
+tsconfig.json
+tsconfig.node.json
+vte.config.tsconfig

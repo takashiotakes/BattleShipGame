@@ -1,4 +1,4 @@
-// src/components/BoardGrid.tsx (新規作成または既存を修正)
+// src/components/BoardGrid.tsx
 
 import React, { useCallback } from "react";
 import { Cell, Coordinate, CellStatus } from "../models/types";
@@ -44,11 +44,11 @@ const BoardGrid: React.FC<BoardGridProps> = ({
         // 自分のボードの場合
         switch (status) {
           case "empty":
-            return "#add8e6"; // 薄い青 (海)
+            return "#add8e6"; // 薄い青 (空のマス)
           case "ship":
-            return "#8b4513"; // 茶色 (未被弾の船)
+            return "#000080"; // ネイビー (船のマス) - ★ここを変更★
           case "hit":
-            return "#ff4500"; // 赤 (被弾した船)
+            return "#ff4500"; // 赤 (被弾したマス)
           case "miss":
             return "#6a5acd"; // スレートブルー (攻撃ミス)
           case "sunk":
@@ -57,10 +57,21 @@ const BoardGrid: React.FC<BoardGridProps> = ({
             return "#add8e6";
         }
       } else {
-        // 相手のボードの場合 (見えない船)
+        // 相手のボードの場合 (攻撃対象のボード)
         switch (status) {
           case "empty":
-            return "#add8e6"; // 薄い青 (海)
+            // ホバー中の船のプレビュー (ShipPlacementでのみ使用)
+            if (
+              x !== undefined &&
+              y !== undefined &&
+              cells[y] &&
+              cells[y][x] &&
+              cells[y][x].status === "ship" && // ShipPlacementで一時的に'ship'になるホバー中のマス
+              onCellHover // onCellHoverが存在する (ShipPlacementから呼ばれている)
+            ) {
+              return "#87CEFA"; // ホバー中の船の色
+            }
+            return "#add8e6"; // 薄い青
           case "hit":
             return "#ff4500"; // 赤 (被弾したマス)
           case "miss":
@@ -109,7 +120,10 @@ const BoardGrid: React.FC<BoardGridProps> = ({
                 }}
                 onClick={() => handleCellClick(cell.x, cell.y)}
                 onMouseEnter={() => handleCellHover(cell.x, cell.y)}
-              ></td>
+              >
+                {/* ここにピンなどの表示ロジックを追加することも可能 */}
+                {/* 例: cell.status === 'hit' ? '💥' : cell.status === 'miss' ? '・' : '' */}
+              </td>
             ))}
           </tr>
         ))}
